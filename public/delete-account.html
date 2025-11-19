@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Suppression de compte – PadelMatch</title>
+<meta name="description" content="Procédure officielle pour demander la suppression de votre compte PadelMatch et de vos données associées.">
+<style>
+:root{--green:#388E3C;--bg:#fafafa;--text:#1c1c1c;--muted:#666}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.55}
+header{background:var(--green);color:#fff;padding:28px 16px}.title{max-width:920px;margin:0 auto;font-size:28px;font-weight:700}
+main{max-width:920px;margin:24px auto;padding:0 16px}section{background:#fff;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.04);padding:20px;margin-bottom:16px}
+h2{font-size:18px;margin:0 0 8px}p,li{font-size:15px}.muted{color:var(--muted)}code,.chip{background:#f1f3f5;border:1px solid #e5e7eb;border-radius:8px;padding:.15rem .45rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cta{display:inline-block;background:var(--green);color:#fff;text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:600}
+footer{max-width:920px;margin:16px auto 48px;padding:0 16px;color:var(--muted);font-size:13px}
+</style>
+</head><body>
+<header><div class="title">Suppression de compte – PadelMatch</div></header>
+<main>
+<section><h2>Résumé</h2>
+<p>Vous pouvez demander la suppression de votre compte PadelMatch et de toutes les données associées. Envoyez-nous un e-mail depuis l’adresse liée à votre compte et nous traiterons votre demande sous <strong>7 jours ouvrés</strong>. La suppression complète des données sur nos systèmes Firebase intervient dans un délai maximal de <strong>30 jours</strong>.</p>
+<p class="muted">Cette page répond aux exigences Google Play relatives à la suppression de compte.</p></section>
+<section><h2>Comment faire la demande</h2>
+<ol>
+<li>Écrivez à <a class="cta" href="mailto:support@padelmatch.pm?subject=Suppression%20de%20compte%20PadelMatch">support@padelmatch.pm</a> depuis l’adresse utilisée pour vous connecter.</li>
+<li>Indiquez : <span class="chip">Pseudo</span>, <span class="chip">UID (si connu)</span>, et “Je souhaite supprimer mon compte et mes données”.</li>
+<li>Nous confirmons la réception puis procédons à la suppression.</li>
+</ol>
+<p class="muted">Si vous n’avez plus accès à l’adresse e-mail du compte, une vérification minimale pourra être demandée (dernier match créé/rejoint, date de création, etc.).</p></section>
+<section><h2>Quelles données sont supprimées&nbsp;?</h2>
+<ul>
+<li><strong>Profil utilisateur</strong> (email, pseudo, avatar, niveau).</li>
+<li><strong>Contenus liés</strong> : matchs créés, participations, messages de chat associés.</li>
+<li><strong>Identifiants techniques</strong> : UID Firebase, tokens FCM.</li>
+<li><strong>Fichiers</strong> éventuels (ex. avatar) dans Firebase Storage.</li>
+</ul>
+<p class="muted">Des données agrégées anonymisées peuvent être conservées à des fins de mesure non ré-identifiante.</p></section>
+<section><h2>Données pouvant être conservées temporairement</h2>
+<ul><li>Journaux techniques et sauvegardes automatiques (max. <strong>30 jours</strong>).</li><li>Conservation légale si la loi l’exige.</li></ul></section>
+<section><h2>Délais</h2>
+<ul><li><strong>Accusé de réception</strong> : sous 72 h.</li><li><strong>Traitement</strong> : sous 7 jours ouvrés.</li><li><strong>Purge complète</strong> : sous 30 jours.</li></ul></section>
+</main>
+<footer>© <span id="y"></span> PadelMatch • Contact : <a href="mailto:support@padelmatch.pm">support@padelmatch.pm</a> • <a href="/privacy.html">Politique de confidentialité</a></footer>
+<script>document.getElementById('y').textContent=new Date().getFullYear()</script>
+</body></html>
