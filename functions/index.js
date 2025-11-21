@@ -1,6 +1,6 @@
 // ======================================================
-// index.js – PadelMatch Backend (Node 22, Admin SDK 12)
-// Version UNIQUE, stable, Android + iOS
+// PadelMatch – Cloud Functions (Node 22, Admin SDK 12) – Gen2
+// Version propre – Android + iOS – Mode A (broadcast)
 // ======================================================
 
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
@@ -12,18 +12,24 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 
+// -------------------------------------------------------
 // Init
+// -------------------------------------------------------
 const app = initializeApp();
 const db = getFirestore(app);
 const messaging = getMessaging(app);
 
-// -----------------------------
+// -------------------------------------------------------
 // Helpers
-// -----------------------------
-const isFriendMarker = (p) => typeof p === "string" && p.startsWith("ami_de_");
+// -------------------------------------------------------
+const isFriendMarker = (p) =>
+  typeof p === "string" && p.startsWith("ami_de_");
+
 const onlyStrings = (list) =>
   Array.isArray(list) ? list.filter((p) => typeof p === "string") : [];
-const cleanUids = (list) => onlyStrings(list).filter((p) => !isFriendMarker(p));
+
+const cleanUids = (list) =>
+  onlyStrings(list).filter((p) => !isFriendMarker(p));
 
 const mask = (t) => {
   if (!t || typeof t !== "string") return String(t);
@@ -34,282 +40,200 @@ const mask = (t) => {
 async function pseudoOf(uid) {
   try {
     const snap = await db.collection("users").doc(uid).get();
-    return (snap.exists && snap.get("pseudo")) || "Quelqu’un";
+    return snap.exists && snap.get("pseudo") ? snap.get("pseudo") : "Quelqu’un";
   } catch {
     return "Quelqu’un";
   }
 }
 
-function sanitizeFriendName(raw) {
-  const s = (raw ?? "").toString().trim().replaceAll(":", "·");
-  return s.length ? s.slice(0, 40) : "Ami";
-}
-
-function parseDateHeure(v) {
-  if (v && typeof v.toDate === "function") return v.toDate();
-  if (typeof v === "number") return new Date(v > 1_000_000_000_000 ? v : v * 1000);
-  return null;
-}
-
-/* ======================================================
-   TRIGGER — notifyUsersOnNewMatch : Nouveau match créé
-   ====================================================== */
-
-export const notifyUsersOnNewMatch = onDocumentCreated(
-  { document: "matches/{matchId}", region: "europe-west1" },
-  async (event) => {
-    const matchId = event.params.matchId;
-    const snap = event.data;
-    if (!snap) return null;
-
-    const match = snap.data() || {};
-    const lieu = match.lieu || match.placeName || "";
-
-    // Compat : supporte latitude/longitude ET lat/lng
-    const rawLat =
-      typeof match.latitude === "number" ? match.latitude : match.lat;
-    const rawLng =
-      typeof match.longitude === "number" ? match.longitude : match.lng;
-    const lat = rawLat;
-    const lng = rawLng;
-
-    const niveau = match.niveau ?? null;
-
-    logger.info("notifyUsersOnNewMatch:start", {
-      matchId,
-      lieu,
-      lat,
-      lng,
-      niveau,
-    });
-
-    // Protection : match sans localisation → pas de ciblage
-    if (typeof lat !== "number" || typeof lng !== "number") {
-      logger.warn("notifyUsersOnNewMatch:no-location", {
-        matchId,
-        latType: typeof lat,
-        lngType: typeof lng,
-      });
-      return null;
-    }
-
-    // 1) Récupération des utilisateurs avec notifications activées
-    const usersSnap = await db
-      .collection("users")
-      .where("notificationsEnabled", "==", true)
-      .get();
-
-    logger.info("notifyUsersOnNewMatch:eligibleUsers", {
-      count: usersSnap.size,
-    });
-
-    if (usersSnap.empty) return null;
-
-    // 2) Filtrage par rayon
-    const EARTH = 6371; // km
-    function distanceKm(aLat, aLng, bLat, bLng) {
-      const dLat = ((bLat - aLat) * Math.PI) / 180;
-      const dLng = ((bLng - aLng) * Math.PI) / 180;
-      const lat1 = (aLat * Math.PI) / 180;
-      const lat2 = (bLat * Math.PI) / 180;
-
-      const x =
-        Math.sin(dLat / 2) ** 2 +
-        Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-
-      return 2 * EARTH * Math.asin(Math.sqrt(x));
-    }
-
-    const recipients = [];
-
-    usersSnap.forEach((doc) => {
-      const u = doc.data() || {};
-      const uid = doc.id;
-
-      const rLat = u.notifLat;
-      const rLng = u.notifLng;
-      const radius = u.notifRadiusKm || 5;
-
-      if (
-        typeof rLat !== "number" ||
-        typeof rLng !== "number" ||
-        typeof radius !== "number"
-      ) {
-        return;
-      }
-
-      const d = distanceKm(rLat, rLng, lat, lng);
-      if (d <= radius) {
-        recipients.push(uid);
-      }
-    });
-
-    logger.info("notifyUsersOnNewMatch:recipientsFiltered", {
-      matchId,
-      count: recipients.length,
-      recipients,
-    });
-
-    if (!recipients.length) return null;
-
-    // 3) Récupération des tokens
-    const tokensByUid = await getTokens(recipients);
-
-    // 4) Payload enrichi
-    const title = "Nouveau match proche de toi";
-    const body = lieu
-      ? `Un match vient d’être créé à ${lieu}.`
-      : "Un nouveau match a été créé près de toi.";
-
-    const sends = [];
-
-    for (const [uid, tokens] of tokensByUid.entries()) {
-      if (!tokens.length) continue;
-
-      logger.info("notifyUsersOnNewMatch:send", {
-        uid,
-        tokenPreview: mask(tokens[0]),
-        matchId,
-      });
-
-      sends.push(
-        send(uid, tokens, title, body, {
-          type: "new_match",
-          matchId,
-          lieu: lieu || "",
-          lat: String(lat),
-          lng: String(lng),
-        })
-      );
-    }
-
-    await Promise.all(sends);
-
-    logger.info("notifyUsersOnNewMatch:done", {
-      matchId,
-      sentTo: recipients.length,
-    });
-
-    return null;
+function frDate(ms) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ms));
+  } catch {
+    return "";
   }
-);
+}
 
-// ======================================================
-// Token loader — UNIVERSAL (Android old/new + iOS)
-// ======================================================
+function frTime(ms) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ms));
+  } catch {
+    return "";
+  }
+}
+
+// -------------------------------------------------------
+// Texte notifications (Mode A – tes nouveaux titres)
+// -------------------------------------------------------
+function copyFor(type, ctx = {}) {
+  const {
+    lieu = "le club",
+    heure = "",
+    date = "",
+    pseudo = "",
+    distance = "",
+    preview = "",
+  } = ctx;
+
+  switch (type) {
+    case "nearby_match":
+      return {
+        title: "Ça joue près de toi",
+        body: `Match à ${lieu}${heure ? ` dans ${heure}` : ""}.`
+      };
+
+    case "new_match":
+      return {
+        title: `Nouveau spot à ${lieu}`,
+        body: `Places libres${heure ? `, départ ${heure}` : ""}${distance ? ` · ${distance} km` : ""}.`
+      };
+
+    case "reminder_24h":
+      return {
+        title: "Demain, ça joue",
+        body: `« ${lieu} » demain à ${date}.`
+      };
+
+    case "reminder_1h":
+      return {
+        title: "Échauffement dans 1h",
+        body: `« ${lieu} » à ${heure}.`
+      };
+
+    case "match_join":
+      return {
+        title: `${pseudo} rejoint la partie`,
+        body: `« ${lieu} ». Ça se remplit — verrouille ta place.`
+      };
+
+    case "match_leave":
+      return {
+        title: `${pseudo} s’est désisté`,
+        body: `« ${lieu} ». Une place se libère.`
+      };
+
+    case "chat":
+      return {
+        title: "Nouveau message",
+        body: (pseudo ? `De ${pseudo} — ` : "") + preview
+      };
+
+    default:
+      return { title: "PadelMatch", body: "Notification" };
+  }
+}
+
+// -------------------------------------------------------
+// Token loader
+// -------------------------------------------------------
 async function getTokens(uids) {
-  const map = new Map();
+  const result = new Map();
 
   await Promise.all(
     uids.map(async (uid) => {
-      const all = new Set();
+      const tokens = new Set();
 
-      // root fcmTokens/{uid}
       try {
         const doc = await db.collection("fcmTokens").doc(uid).get();
         if (doc.exists) {
           const d = doc.data() || {};
-          if (Array.isArray(d.tokens))
-            d.tokens.forEach((t) => t && all.add(String(t)));
-          if (typeof d.token === "string") all.add(d.token);
+          if (Array.isArray(d.tokens)) d.tokens.forEach((t) => t && tokens.add(String(t)));
+          if (typeof d.token === "string") tokens.add(d.token);
           if (d.fcmTokens && typeof d.fcmTokens === "object")
-            Object.keys(d.fcmTokens).forEach((k) => all.add(k));
+            Object.keys(d.fcmTokens).forEach((k) => tokens.add(k));
         }
       } catch {}
 
-      // users/{uid}
       try {
         const doc = await db.collection("users").doc(uid).get();
         if (doc.exists) {
           const d = doc.data() || {};
-          if (Array.isArray(d.tokens))
-            d.tokens.forEach((t) => t && all.add(String(t)));
-          if (typeof d.fcmToken === "string") all.add(d.fcmToken);
+          if (Array.isArray(d.tokens)) d.tokens.forEach((t) => t && tokens.add(String(t)));
+          if (typeof d.fcmToken === "string") tokens.add(d.fcmToken);
           if (d.fcmTokens && typeof d.fcmTokens === "object")
-            Object.keys(d.fcmTokens).forEach((k) => all.add(k));
+            Object.keys(d.fcmTokens).forEach((k) => tokens.add(k));
         }
       } catch {}
 
-      // subcollection users/{uid}/fcmTokens/{token}
       try {
-        const sub = await db
-          .collection("users")
-          .doc(uid)
-          .collection("fcmTokens")
-          .get();
-        sub.docs.forEach((d) => all.add(d.id));
+        const sub = await db.collection("users").doc(uid).collection("fcmTokens").get();
+        sub.docs.forEach((d) => tokens.add(d.id));
       } catch {}
 
-      map.set(uid, [...all]);
+      result.set(uid, [...tokens]);
     })
   );
 
-  return map;
+  return result;
 }
 
-// ======================================================
+// -------------------------------------------------------
 // Purge invalid tokens
-// ======================================================
+// -------------------------------------------------------
 async function purgeTokens(uid, tokens) {
   const userRef = db.collection("users").doc(uid);
   const fcmRef = db.collection("fcmTokens").doc(uid);
 
-  const delObj = {};
-  tokens.forEach((t) => (delObj[`fcmTokens.${t}`] = FieldValue.delete()));
+  const delMap = {};
+  tokens.forEach((t) => (delMap[`fcmTokens.${t}`] = FieldValue.delete()));
 
   await Promise.all([
-    fcmRef
-      .set({ tokens: FieldValue.arrayRemove(...tokens) }, { merge: true })
-      .catch(() => {}),
-    fcmRef.set(delObj, { merge: true }).catch(() => {}),
-    userRef
-      .set({ tokens: FieldValue.arrayRemove(...tokens) }, { merge: true })
-      .catch(() => {}),
-    userRef.set(delObj, { merge: true }).catch(() => {}),
+    fcmRef.set({ tokens: FieldValue.arrayRemove(...tokens) }, { merge: true }).catch(() => {}),
+    fcmRef.set(delMap, { merge: true }).catch(() => {}),
+    userRef.set({ tokens: FieldValue.arrayRemove(...tokens) }, { merge: true }).catch(() => {}),
+    userRef.set(delMap, { merge: true }).catch(() => {}),
   ]);
 }
 
-// ======================================================
-// Unified FCM sender
-// ======================================================
-async function send(uid, tokens, title, body, data) {
-  try {
-    logger.info("FCM:send", { uid, title, tokens: tokens.map(mask) });
+// -------------------------------------------------------
+// Payload APNs
+// -------------------------------------------------------
+function apnsPayload(title, body, data) {
+  const d = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]));
+  return {
+    payload: {
+      aps: { alert: { title, body }, sound: "default" },
+      ...d,
+    },
+  };
+}
 
+// -------------------------------------------------------
+// Envoi APNs + FCM
+// -------------------------------------------------------
+async function send(uid, tokens, title, body, data) {
+  const d = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]));
+  const apns = apnsPayload(title, body, d);
+
+  try {
     const res = await messaging.sendEachForMulticast({
       notification: { title, body },
-      data: Object.fromEntries(
-        Object.entries(data).map(([k, v]) => [k, String(v)])
-      ),
+      data: d,
+      apns,
       tokens,
     });
 
     const failures = res.responses
-      .map((r, i) =>
-        !r.success
-          ? { token: tokens[i], code: r.error?.code, msg: r.error?.message }
-          : null
-      )
+      .map((r, i) => (!r.success ? { token: tokens[i], code: r.error?.code } : null))
       .filter(Boolean);
 
-    if (failures.length)
-      logger.error(
-        "FCM:failures",
-        failures.map((f) => ({ token: mask(f.token), code: f.code }))
-      );
-
     const dead = failures
-      .filter(
-        (f) =>
-          f.code === "messaging/registration-token-not-registered" ||
-          f.code === "messaging/invalid-registration-token"
+      .filter((f) =>
+        f.code === "messaging/invalid-registration-token" ||
+        f.code === "messaging/registration-token-not-registered"
       )
       .map((f) => f.token);
 
-    if (dead.length) {
-      logger.info("FCM:purge", { uid, count: dead.length });
-      await purgeTokens(uid, dead);
-    }
+    if (dead.length) await purgeTokens(uid, dead);
 
     return res;
   } catch (e) {
@@ -319,217 +243,185 @@ async function send(uid, tokens, title, body, data) {
 }
 
 // ======================================================
-// CALLABLE — joinMatch
+// CALLABLE — Test direct
 // ======================================================
-export const joinMatch = onCall({ region: "europe-west1" }, async (req) => {
-  const uid = req.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated");
+export const pushNearbyMatch = onCall({ region: "europe-west1" }, async (req) => {
+  const { token, matchId, lieu = "", heure = "" } = req.data || {};
+  if (!token || !matchId) throw new HttpsError("invalid-argument");
 
-  const matchId = req.data?.matchId;
-  if (!matchId) throw new HttpsError("invalid-argument");
+  const deeplink = `padelmatch://match/${matchId}`;
+  const { title, body } = copyFor("nearby_match", { lieu, heure });
 
-  logger.info("joinMatch:start", { uid, matchId });
-
-  const ref = db.collection("matches").doc(matchId);
-
-  try {
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists) throw new HttpsError("not-found");
-
-      const data = snap.data();
-      const parts = onlyStrings(data.participants || []);
-      const capacity = Number.isInteger(data.capacity) ? data.capacity : 4;
-
-      if (parts.includes(uid)) throw new HttpsError("already-exists");
-      if (parts.length >= capacity) throw new HttpsError("failed-precondition");
-
-      parts.push(uid);
-
-      tx.update(ref, { participants: parts });
-    });
-
-    return { ok: true };
-  } catch (e) {
-    logger.error("joinMatch:error", e);
-    throw e instanceof HttpsError ? e : new HttpsError("internal");
-  }
+  return await messaging.send({
+    token,
+    notification: { title, body },
+    data: { type: "nearby_match", matchId, deeplink },
+    apns: apnsPayload(title, body, { type: "nearby_match", matchId, deeplink }),
+  });
 });
 
 // ======================================================
-// CALLABLE — leaveMatch
+// Trigger — NEW MATCH (Mode A)
 // ======================================================
-export const leaveMatch = onCall({ region: "europe-west1" }, async (req) => {
-  const uid = req.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated");
+export const notifyUsersOnNewMatch = onDocumentCreated(
+  { region: "europe-west1", document: "matches/{matchId}" },
+  async (event) => {
+    const matchId = event.params.matchId;
+    const data = event.data?.data() || {};
+    const lieu = data.lieu || data.placeName || "Match";
 
-  const matchId = req.data?.matchId;
-  if (!matchId) throw new HttpsError("invalid-argument");
+    const usersSnap = await db.collection("users")
+      .where("notificationsEnabled", "==", true)
+      .get();
 
-  logger.info("leaveMatch:start", { uid, matchId });
+    if (usersSnap.empty) return null;
 
-  const ref = db.collection("matches").doc(matchId);
+    const uids = usersSnap.docs.map((d) => d.id);
+    const tokensByUid = await getTokens(uids);
 
-  try {
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists) throw new HttpsError("not-found");
+    const deeplink = `padelmatch://match/${matchId}`;
+    const { title, body } = copyFor("new_match", { lieu });
 
-      const data = snap.data();
-      const prefix = `ami_de_${uid}:`;
+    const ops = [];
 
-      const next = onlyStrings(data.participants || []).filter(
-        (p) => p !== uid && !p.startsWith(prefix)
+    for (const [uid, tokens] of tokensByUid.entries()) {
+      if (!tokens.length) continue;
+      ops.push(
+        send(uid, tokens, title, body, {
+          type: "new_match",
+          matchId,
+          lieu,
+          deeplink,
+        })
       );
+    }
 
-      tx.update(ref, { participants: next });
-    });
-
-    return { ok: true };
-  } catch (e) {
-    logger.error("leaveMatch:error", e);
-    throw e instanceof HttpsError ? e : new HttpsError("internal");
+    await Promise.all(ops);
+    return null;
   }
-});
+);
 
 // ======================================================
-// TRIGGER — notifyOnNewMessage
+// Trigger — CHAT (avec otherUid obligatoire pour iOS)
 // ======================================================
 export const notifyOnNewMessage = onDocumentCreated(
-  { document: "messages/{messageId}", region: "europe-west1" },
+  { region: "europe-west1", document: "messages/{messageId}" },
   async (event) => {
-    const snap = event.data;
-    if (!snap) return null;
+    const m = event.data?.data();
+    if (!m) return null;
 
-    const msg = snap.data();
-    const receiverUid = msg.receiverUid;
-    const senderUid = msg.senderUid;
-    const matchId = msg.matchId;
-    const text = msg.text || "";
+    const { senderUid, receiverUid, matchId, text = "" } = m;
+    if (!senderUid || !receiverUid || senderUid === receiverUid) return null;
 
-    logger.info("notifyOnNewMessage:start", { matchId, senderUid, receiverUid });
+    const senderName = await pseudoOf(senderUid);
 
-    if (!receiverUid || !senderUid) return null;
-    if (receiverUid === senderUid) return null;
-
-    const [senderName, tokensByUid] = await Promise.all([
-      pseudoOf(senderUid),
-      getTokens([receiverUid]),
-    ]);
-
+    const tokensByUid = await getTokens([receiverUid]);
     const tokens = tokensByUid.get(receiverUid) || [];
     if (!tokens.length) return null;
 
-    const title = `${senderName} t’a envoyé un message`;
-    const body = text.length <= 120 ? text : text.slice(0, 117) + "…";
+    const preview = text.length <= 120 ? text : text.slice(0, 117) + "…";
 
-    await send(receiverUid, tokens, title, body, {
+    const { title, body } = copyFor("chat", {
+      pseudo: senderName,
+      preview,
+    });
+
+    const payload = {
       type: "chat",
       matchId,
+      otherUid: senderUid,   // *** CRUCIAL POUR iOS ***
       senderUid,
-    });
+      preview,
+      deeplink: `padelmatch://chat/${matchId}/${senderUid}`,
+    };
+
+    await send(receiverUid, tokens, title, body, payload);
 
     return null;
   }
 );
 
 // ======================================================
-// TRIGGER — onMatchParticipantsChange
+// Trigger — join / leave
 // ======================================================
 export const onMatchParticipantsChange = onDocumentUpdated(
-  { document: "matches/{matchId}", region: "europe-west1" },
+  { region: "europe-west1", document: "matches/{matchId}" },
   async (event) => {
     const matchId = event.params.matchId;
 
-    const before = event.data.before.data() || {};
-    const after = event.data.after.data() || {};
+    const before = cleanUids(event.data.before.data()?.participants || []);
+    const after = cleanUids(event.data.after.data()?.participants || []);
 
-    const beforeParts = cleanUids(before.participants || []);
-    const afterParts = cleanUids(after.participants || []);
+    const joined = after.filter((p) => !before.includes(p));
+    const left = before.filter((p) => !after.includes(p));
+    if (!joined.length && !left.length) return null;
 
-    const joined = afterParts.filter((p) => !beforeParts.includes(p));
-    const left = beforeParts.filter((p) => !afterParts.includes(p));
+    const data = event.data.after.data() || {};
+    const lieu = data.lieu || data.placeName || "Match";
 
-    if (joined.length === 0 && left.length === 0) return null;
+    const owner = data.createurUid;
+    const recipients = new Set(after);
+    if (owner) recipients.add(owner);
 
-    const ownerUid =
-      after.createurUid ||
-      after.creatorUid ||
-      before.createurUid ||
-      before.creatorUid;
-
-    const recipients = new Set();
-
-    if (ownerUid) recipients.add(ownerUid);
-    afterParts.forEach((p) => recipients.add(p));
     joined.forEach((p) => recipients.delete(p));
     left.forEach((p) => recipients.delete(p));
 
     const tokensByUid = await getTokens([...recipients]);
-    const lieu = after.lieu || after.placeName || "Match";
-
     const ops = [];
 
     for (const j of joined) {
-      const body = `${await pseudoOf(j)} a rejoint « ${lieu} ».`;
+      const { title, body } = copyFor("match_join", {
+        pseudo: await pseudoOf(j),
+        lieu,
+      });
+
       for (const [uid, tokens] of tokensByUid.entries()) {
-        if (tokens.length)
-          ops.push(
-            send(uid, tokens, "Nouveau joueur", body, {
-              type: "match_join",
-              matchId,
-            })
-          );
+        if (!tokens.length) continue;
+        ops.push(send(uid, tokens, title, body, { type: "match_join", matchId }));
       }
     }
 
     for (const l of left) {
-      const body = `${await pseudoOf(l)} s’est désisté de « ${lieu} ».`;
+      const { title, body } = copyFor("match_leave", {
+        pseudo: await pseudoOf(l),
+        lieu,
+      });
+
       for (const [uid, tokens] of tokensByUid.entries()) {
-        if (tokens.length)
-          ops.push(
-            send(uid, tokens, "Désistement", body, {
-              type: "match_leave",
-              matchId,
-            })
-          );
+        if (!tokens.length) continue;
+        ops.push(send(uid, tokens, title, body, { type: "match_leave", matchId }));
       }
     }
 
     await Promise.all(ops);
-
     return null;
   }
 );
 
 // ======================================================
-// Scheduled reminders (H-24 & H-1)
+// CRON — Rappels H-24 / H-1
 // ======================================================
 export const remind24hBefore = onSchedule(
-  { schedule: "every 5 minutes", region: "europe-west1" },
+  { region: "europe-west1", schedule: "every 5 minutes", timeZone: "Europe/Paris" },
   async () => {
-    logger.info("remind24hBefore:tick");
     await remindForDelta(24);
   }
 );
 
 export const remindOneHourBefore = onSchedule(
-  { schedule: "every 5 minutes", region: "europe-west1" },
+  { region: "europe-west1", schedule: "every 5 minutes", timeZone: "Europe/Paris" },
   async () => {
-    logger.info("remindOneHourBefore:tick");
     await remindForDelta(1);
   }
 );
 
 async function remindForDelta(hours) {
   const now = Date.now();
-  const deltaMs = hours * 3600 * 1000;
+  const delta = hours * 3600 * 1000;
   const win = 5 * 60 * 1000;
 
-  const min = now + deltaMs - win;
-  const max = now + deltaMs + win;
-
-  logger.info("remindForDelta:range", { hours, min, max });
+  const min = now + delta - win;
+  const max = now + delta + win;
 
   const snap = await db
     .collection("matches")
@@ -537,32 +429,22 @@ async function remindForDelta(hours) {
     .where("dateHeure", "<=", max)
     .get();
 
-  logger.info("remindForDelta:found", { hours, count: snap.size });
-
   for (const doc of snap.docs) {
     const m = doc.data();
     const matchId = doc.id;
     const lieu = m.lieu || m.placeName || "Match";
-
     const players = cleanUids(m.participants || []);
-    if (!players.length) {
-      logger.info("remindForDelta:no-participants", { matchId });
-      continue;
-    }
+    if (!players.length) continue;
 
     const tokensByUid = await getTokens(players);
 
-    const title = hours === 24 ? "Match demain" : "Match bientôt";
-    const body =
+    const { title, body } =
       hours === 24
-        ? `Ton match « ${lieu} » est dans 24h.`
-        : `Ton match « ${lieu} » commence dans 1h.`;
+        ? copyFor("reminder_24h", { lieu, date: frDate(m.dateHeure) })
+        : copyFor("reminder_1h", { lieu, heure: frTime(m.dateHeure) });
 
     for (const [uid, tokens] of tokensByUid.entries()) {
-      if (!tokens.length) {
-        logger.info("remindForDelta:no-tokens", { matchId, uid });
-        continue;
-      }
+      if (!tokens.length) continue;
       await send(uid, tokens, title, body, {
         type: "reminder",
         matchId,
@@ -572,58 +454,20 @@ async function remindForDelta(hours) {
 }
 
 // ======================================================
-// LEGACY fallbacks
+// Legacy (nécessaire pour supprimer les anciennes fonctions)
 // ======================================================
-export const sendChatNotification = onCall(
-  { region: "europe-west1" },
-  async (req) => {
-    const uid = req.auth?.uid;
-    if (!uid) throw new HttpsError("unauthenticated");
-
-    const receiverUid = req.data?.receiverUid;
-    const matchId = req.data?.matchId;
-    const text = String(req.data?.text || "");
-
-    const [senderName, tokensByUid] = await Promise.all([
-      pseudoOf(uid),
-      getTokens([receiverUid]),
-    ]);
-
-    const tokens = tokensByUid.get(receiverUid) || [];
-    if (!tokens.length) return { ok: true };
-
-    const title = `${senderName} t’a envoyé un message`;
-    const body = text.length <= 120 ? text : text.slice(0, 117) + "…";
-
-    await send(receiverUid, tokens, title, body, {
-      type: "chat",
-      matchId,
-      senderUid: uid,
-      trigger: "legacy",
-    });
-
-    return { ok: true };
-  }
-);
-
-export const notifyOneHourBeforeMatch = onCall(
-  { region: "europe-west1" },
-  () => {
-    throw new HttpsError("failed-precondition", "DEPRECATED");
-  }
-);
-export const notify24HoursBeforeMatch = onCall(
-  { region: "europe-west1" },
-  () => {
-    throw new HttpsError("failed-precondition", "DEPRECATED");
-  }
-);
-export const deleteAccount = onCall({ region: "europe-west1" }, () => {
+export const sendChatNotification = onCall({ region: "europe-west1" }, async () => {
   throw new HttpsError("failed-precondition", "DEPRECATED");
 });
-export const deleteUserAccount = onCall(
-  { region: "europe-west1" },
-  () => {
-    throw new HttpsError("failed-precondition", "DEPRECATED");
-  }
-);
+export const notifyOneHourBeforeMatch = onCall({ region: "europe-west1" }, async () => {
+  throw new HttpsError("failed-precondition", "DEPRECATED");
+});
+export const notify24HoursBeforeMatch = onCall({ region: "europe-west1" }, async () => {
+  throw new HttpsError("failed-precondition", "DEPRECATED");
+});
+export const deleteAccount = onCall({ region: "europe-west1" }, async () => {
+  throw new HttpsError("failed-precondition", "DEPRECATED");
+});
+export const deleteUserAccount = onCall({ region: "europe-west1" }, async () => {
+  throw new HttpsError("failed-precondition", "DEPRECATED");
+});
