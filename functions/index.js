@@ -333,6 +333,7 @@ async function hasTimeOverlap(uid, targetMs) {
   return false;
 }
 
+// NOTE: conservé (peut servir plus tard), mais PLUS UTILISÉ dans createMatch (règle produit demandée)
 async function hasPlaceConflictKm1(lat, lng, targetMs) {
   const start = targetMs - 2 * HOUR_MS;
   const end = targetMs + 2 * HOUR_MS;
@@ -400,6 +401,9 @@ async function pushNearbyForMatchId(matchId) {
 
 // ======================================================
 // CALLABLE — createMatch (SERVER SOURCE OF TRUTH)
+// ✅ NOUVELLE RÈGLE PRODUIT :
+// - Blocage uniquement "par utilisateur" (TIME_OVERLAP)
+// - PAS de blocage global par lieu (PLACE_CONFLICT supprimé)
 // ======================================================
 export const createMatch = onCall(RUNTIME, async (req) => {
   try {
@@ -434,7 +438,7 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     const jm = joueursManquants === 1 || joueursManquants === 2 ? joueursManquants : null;
     if (jm === null) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: joueursManquants must be 1 or 2");
 
-    // --- Conflict checks
+    // --- Conflict checks (PER-USER ONLY)
     let overlap = false;
     try {
       overlap = await hasTimeOverlap(uid, dateHeure);
@@ -443,22 +447,6 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
     }
     if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
-
-    let placeConflict = false;
-    try {
-      placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
-    } catch (e) {
-      logger.error("createMatch hasPlaceConflictKm1 crash", {
-        uid,
-        placeId,
-        lat,
-        lng,
-        dateHeure,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
-    }
-    if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
 
     // --- Participants (4 max)
     const participants = [uid];
