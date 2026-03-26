@@ -145,6 +145,112 @@ async function tokensOf(uid) {
   return snap.docs.map((x) => x.id);
 }
 
+function toMillis(value) {
+  if (typeof value === "number") {
+    return value > 1_000_000_000_000 ? value : value * 1000;
+  }
+  if (value && typeof value.toMillis === "function") {
+    return value.toMillis();
+  }
+  if (value && typeof value.seconds === "number") {
+    return value.seconds * 1000;
+  }
+  return null;
+}
+
+function getMatchCoords(data) {
+  const lat = typeof data.lat === "number" ? data.lat : data.latitude;
+  const lng = typeof data.lng === "number" ? data.lng : data.longitude;
+
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  return { lat, lng };
+}
+
+function getMatchLevel(data) {
+  if (typeof data.level === "number") return data.level;
+  if (typeof data.niveau === "number") return data.niveau;
+  return null;
+}
+
+function getUserLevel(data) {
+  if (typeof data.level === "number") return data.level;
+  if (typeof data.niveau === "number") return data.niveau;
+  return null;
+}
+
+function distanceKmApprox(a, b) {
+  return Math.hypot(a.lat - b.lat, a.lng - b.lng) * 111;
+}
+
+function participantOwnsOrJoined(matchData, uid) {
+  const participants = Array.isArray(matchData.participants) ? matchData.participants : [];
+  const owner = asString(matchData.createurUid || matchData.creatorUid || "");
+
+  if (owner === uid) return true;
+
+  return participants.some((p) => {
+    if (typeof p !== "string") return false;
+    return p === uid || p.startsWith(`ami_de_${uid}:`);
+  });
+}
+
+function isUserEligibleForMatch(userData, uid, matchData, opts = {}) {
+  if (userData?.notificationsEnabled !== true) return false;
+  if (participantOwnsOrJoined(matchData, uid)) return false;
+
+  const coords = getMatchCoords(matchData);
+  if (!coords) return false;
+
+  if (
+    typeof userData.notifLat !== "number" ||
+    typeof userData.notifLng !== "number" ||
+    typeof userData.notifRadiusKm !== "number"
+  ) {
+    return false;
+  }
+
+  const userCoords = { lat: userData.notifLat, lng: userData.notifLng };
+  if (distanceKmApprox(userCoords, coords) > userData.notifRadiusKm) return false;
+
+  const matchLevel = getMatchLevel(matchData);
+  const userLevel = getUserLevel(userData);
+  if (typeof matchLevel === "number" && typeof userLevel === "number") {
+    if (Math.abs(matchLevel - userLevel) > 1) return false;
+  }
+
+  const matchMs = toMillis(matchData.dateHeure);
+  if (!matchMs) return false;
+
+  const now = Date.now();
+  if (matchMs <= now) return false;
+
+  if (typeof opts.maxHoursAhead === "number") {
+    const maxMs = now + opts.maxHoursAhead * 3600 * 1000;
+    if (matchMs > maxMs) return false;
+  }
+
+  return true;
+}
+
+async function findEligibleRecipients(matchData, opts = {}) {
+  const usersSnap = await db.collection("users")
+    .where("notificationsEnabled", "==", true)
+    .get();
+
+  if (usersSnap.empty) return [];
+
+  const recipients = [];
+  for (const doc of usersSnap.docs) {
+    const uid = doc.id;
+    const userData = doc.data() || {};
+    if (isUserEligibleForMatch(userData, uid, matchData, opts)) {
+      recipients.push(uid);
+    }
+  }
+
+  return recipients;
+}
+
 // ======================================================
 // SENDERS (Android / iOS)
 // ======================================================
@@ -358,44 +464,27 @@ async function pushNearbyForMatchId(matchId) {
   if (!matchSnap.exists) return;
 
   const m = matchSnap.data() || {};
-  const coords = getLatLngFromMatchData(m);
-  if (!coords) return;
-
   const lieu = asString(m.lieu || m.placeName || "le club");
-  const dateHeure = normalizeDateMs(m.dateHeure);
-  const createurUid = asString(m.createurUid);
+  const dateHeure = toMillis(m.dateHeure);
   if (!dateHeure) return;
 
-  const users = await db.collection("users").where("notificationsEnabled", "==", true).get();
-  const ops = [];
+  const recipientUids = await findEligibleRecipients(m, { maxHoursAhead: 24 });
+  if (!recipientUids.length) return;
 
-  for (const u of users.docs) {
-    if (u.id === createurUid) continue;
+  const heure = frTime(dateHeure);
 
-    const d = u.data();
-    if (typeof d.notifLat !== "number" || typeof d.notifLng !== "number" || typeof d.notifRadiusKm !== "number") {
-      continue;
-    }
+  for (const uid of recipientUids) {
+    const tokens = await tokensOf(uid);
+    if (!tokens.length) continue;
 
-    // cheap approx prefilter
-    const distKm = Math.hypot(d.notifLat - coords.lat, d.notifLng - coords.lng) * 111;
-    if (distKm > d.notifRadiusKm) continue;
+    const copy = copyFor("match", "new", { lieu, heure });
 
-    const tokensSnap = await u.ref.collection("fcmTokens").get();
-    const tokenList = tokensSnap.docs.map((x) => x.id);
-
-    const copy = copyFor("match", "new", { lieu, heure: frTime(dateHeure) });
-
-    ops.push(
-      send(tokenList, {
-        title: copy.title,
-        body: copy.body,
-        data: { type: "match", subtype: "new", matchId },
-      })
-    );
+    await send(tokens, {
+      title: copy.title,
+      body: copy.body,
+      data: { type: "match", subtype: "new", matchId },
+    });
   }
-
-  await Promise.all(ops);
 }
 
 // ======================================================
@@ -671,17 +760,30 @@ export const pushNearbyMatchTrigger = onDocumentCreated(
 export const onMatchParticipantsChange = onDocumentUpdated(
   { region: "europe-west1", document: "matches/{matchId}" },
   async (event) => {
-    const before = cleanUids(event.data.before.data().participants);
-    const after = cleanUids(event.data.after.data().participants);
+    const matchId = event.params.matchId;
+
+    const beforeRaw = Array.isArray(event.data.before.data()?.participants)
+      ? event.data.before.data().participants
+      : [];
+    const afterRaw = Array.isArray(event.data.after.data()?.participants)
+      ? event.data.after.data().participants
+      : [];
+
+    const before = cleanUids(beforeRaw);
+    const after = cleanUids(afterRaw);
 
     const joined = after.filter((p) => !before.includes(p));
     const left = before.filter((p) => !after.includes(p));
-    if (!joined.length && !left.length) return;
 
-    const m = event.data.after.data();
-    const matchId = event.params.matchId;
+    const beforeCount = beforeRaw.length;
+    const afterCount = afterRaw.length;
+    const becameOnePlayerAway = beforeCount !== 3 && afterCount === 3;
+
+    if (!joined.length && !left.length && !becameOnePlayerAway) return null;
+
+    const m = event.data.after.data() || {};
     const lieu = asString(m.lieu || m.placeName || "le club");
-    const createurUid = asString(m.createurUid);
+    const createurUid = asString(m.createurUid || m.creatorUid);
 
     const recipients = new Set(after);
     if (createurUid) recipients.add(createurUid);
@@ -694,13 +796,46 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 
       for (const j of joined) {
         const copy = copyFor("match", "join", { pseudo: await pseudoOf(j), lieu });
-        await send(tokens, { title: copy.title, body: copy.body, data: { type: "match", subtype: "join", matchId } });
+        await send(tokens, {
+          title: copy.title,
+          body: copy.body,
+          data: { type: "match", subtype: "join", matchId },
+        });
       }
+
       for (const l of left) {
         const copy = copyFor("match", "leave", { pseudo: await pseudoOf(l), lieu });
-        await send(tokens, { title: copy.title, body: copy.body, data: { type: "match", subtype: "leave", matchId } });
+        await send(tokens, {
+          title: copy.title,
+          body: copy.body,
+          data: { type: "match", subtype: "leave", matchId },
+        });
       }
     }
+
+    if (becameOnePlayerAway) {
+      const urgentRecipientUids = await findEligibleRecipients(m, { maxHoursAhead: 12 });
+      const heure = toMillis(m.dateHeure) ? frTime(toMillis(m.dateHeure)) : "";
+
+      for (const uid of urgentRecipientUids) {
+        const tokens = await tokensOf(uid);
+        if (!tokens.length) continue;
+
+        await send(tokens, {
+          title: "🔥 Plus qu’1 joueur",
+          body: heure
+            ? `${lieu} • ${heure}. Une seule place reste disponible près de toi.`
+            : `${lieu}. Une seule place reste disponible près de toi.`,
+          data: {
+            type: "nearby_match_urgent",
+            urgency: "plus_one",
+            matchId,
+          },
+        });
+      }
+    }
+
+    return null;
   }
 );
 
