@@ -1238,6 +1238,38 @@ function assertValidClubStatus(status) {
   }
 }
 
+export const choosePlayerRole = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const userRef = db.collection("users").doc(uid);
+
+  await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) {
+      throw new HttpsError("failed-precondition", "USER_PROFILE_NOT_FOUND");
+    }
+
+    const currentRole = asString(userSnap.get("role"));
+    const currentClubId = asString(userSnap.get("clubId"));
+
+    if (currentRole && currentRole !== "player") {
+      throw new HttpsError("failed-precondition", "ROLE_ALREADY_SET");
+    }
+
+    if (currentClubId) {
+      throw new HttpsError("failed-precondition", "USER_ALREADY_HAS_CLUB");
+    }
+
+    tx.set(userRef, {
+      role: "player",
+      clubId: "",
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  logger.info("choosePlayerRole ok", { uid });
+  return { ok: true, role: "player" };
+});
+
 export const createPadimaClub = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
   const data = req.data || {};
