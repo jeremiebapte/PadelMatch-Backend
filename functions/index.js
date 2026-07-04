@@ -1256,6 +1256,7 @@ export const broadcastMarketing = onCall(RUNTIME, async (req) => {
   return { ok: true };
 });
 
+
 // ======================================================
 // DELETE ACCOUNT — compat prod
 // ======================================================
@@ -1264,9 +1265,25 @@ export const deleteAccount = onCall(RUNTIME, async (req) => {
 
   try {
     const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+
+    let pseudoLower = "";
+    if (userSnap.exists) {
+      pseudoLower = asString(userSnap.data()?.pseudoLower);
+    }
+
     const tokensSnap = await userRef.collection("fcmTokens").get();
-    await Promise.all(tokensSnap.docs.map((d) => d.ref.delete()));
-    await userRef.delete();
+
+    const deletes = [
+      ...tokensSnap.docs.map((d) => d.ref.delete()),
+      userRef.delete(),
+    ];
+
+    if (pseudoLower) {
+      deletes.push(db.collection("usernames").doc(pseudoLower).delete());
+    }
+
+    await Promise.all(deletes);
   } catch (e) {
     logger.warn("deleteAccount: firestore cleanup failed", e);
   }
@@ -1285,9 +1302,25 @@ export const deleteUserAccount = onCall(RUNTIME, async (req) => {
 
   try {
     const userRef = db.collection("users").doc(targetUid);
+    const userSnap = await userRef.get();
+
+    let pseudoLower = "";
+    if (userSnap.exists) {
+      pseudoLower = asString(userSnap.data()?.pseudoLower);
+    }
+
     const tokensSnap = await userRef.collection("fcmTokens").get();
-    await Promise.all(tokensSnap.docs.map((d) => d.ref.delete()));
-    await userRef.delete();
+
+    const deletes = [
+      ...tokensSnap.docs.map((d) => d.ref.delete()),
+      userRef.delete(),
+    ];
+
+    if (pseudoLower) {
+      deletes.push(db.collection("usernames").doc(pseudoLower).delete());
+    }
+
+    await Promise.all(deletes);
   } catch (e) {
     logger.warn("deleteUserAccount: firestore cleanup failed", e);
   }
