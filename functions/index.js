@@ -1217,6 +1217,142 @@ export const rejectClubSuggestion = onCall(RUNTIME, async (req) => {
   return { ok: true };
 });
 
+
+// ======================================================
+// PADIMA CLUB — account lifecycle
+// ======================================================
+
+function cleanOptionalString(v) {
+  const s = asString(v);
+  return s.length ? s : null;
+}
+
+function cleanOptionalNumber(v) {
+  const n = asNumber(v);
+  return n === null ? null : n;
+}
+
+function assertValidClubStatus(status) {
+  if (!["pending", "approved", "rejected"].includes(status)) {
+    throw new HttpsError("invalid-argument", "INVALID_CLUB_STATUS");
+  }
+}
+
+export const createPadimaClub = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const data = req.data || {};
+
+  const name = asString(data.name);
+  const city = asString(data.city);
+  const address = asString(data.address);
+  const latitude = asNumber(data.latitude);
+  const longitude = asNumber(data.longitude);
+
+  if (!name || !city || !address) {
+    throw new HttpsError("invalid-argument", "MISSING_CLUB_IDENTITY");
+  }
+
+  if (latitude === null || longitude === null) {
+    throw new HttpsError("invalid-argument", "MISSING_CLUB_LOCATION");
+  }
+
+  const userRef = db.collection("users").doc(uid);
+  const clubRef = db.collection("clubs").doc();
+
+  await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) {
+      throw new HttpsError("failed-precondition", "USER_PROFILE_NOT_FOUND");
+    }
+
+    if (asString(userSnap.get("clubId"))) {
+      throw new HttpsError("already-exists", "USER_ALREADY_HAS_CLUB");
+    }
+
+    tx.set(clubRef, {
+      name,
+      city,
+      address,
+      latitude,
+      longitude,
+      adminUid: uid,
+      status: "pending",
+
+      logoUrl: cleanOptionalString(data.logoUrl),
+      coverUrl: cleanOptionalString(data.coverUrl),
+      phone: cleanOptionalString(data.phone),
+      email: cleanOptionalString(data.email),
+      website: cleanOptionalString(data.website),
+      courtsCount: cleanOptionalNumber(data.courtsCount),
+      description: cleanOptionalString(data.description),
+
+      approvedAt: null,
+      rejectedAt: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    tx.set(userRef, {
+      role: "club_admin",
+      clubId: clubRef.id,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  logger.info("createPadimaClub ok", { uid, clubId: clubRef.id });
+  return { ok: true, clubId: clubRef.id, status: "pending" };
+});
+
+export const approvePadimaClub = onCall(RUNTIME, async (req) => {
+  assertAdmin(req);
+
+  const clubId = asString(req.data?.clubId);
+  if (!clubId) throw new HttpsError("invalid-argument", "MISSING_CLUB_ID");
+
+  const clubRef = db.collection("clubs").doc(clubId);
+
+  await db.runTransaction(async (tx) => {
+    const clubSnap = await tx.get(clubRef);
+    if (!clubSnap.exists) throw new HttpsError("not-found", "CLUB_NOT_FOUND");
+
+    assertValidClubStatus(asString(clubSnap.get("status")) || "pending");
+
+    tx.set(clubRef, {
+      status: "approved",
+      approvedAt: FieldValue.serverTimestamp(),
+      rejectedAt: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return { ok: true, clubId, status: "approved" };
+});
+
+export const rejectPadimaClub = onCall(RUNTIME, async (req) => {
+  assertAdmin(req);
+
+  const clubId = asString(req.data?.clubId);
+  if (!clubId) throw new HttpsError("invalid-argument", "MISSING_CLUB_ID");
+
+  const clubRef = db.collection("clubs").doc(clubId);
+
+  await db.runTransaction(async (tx) => {
+    const clubSnap = await tx.get(clubRef);
+    if (!clubSnap.exists) throw new HttpsError("not-found", "CLUB_NOT_FOUND");
+
+    assertValidClubStatus(asString(clubSnap.get("status")) || "pending");
+
+    tx.set(clubRef, {
+      status: "rejected",
+      rejectedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return { ok: true, clubId, status: "rejected" };
+});
+
+
 // ======================================================
 // BROADCAST — admin (compat prod)
 // ======================================================
