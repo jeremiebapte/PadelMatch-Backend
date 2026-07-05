@@ -858,7 +858,152 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
   logger.info("leaveMatch ok", { matchId, uid });
   return { ok: true, matchId };
 });
+// ======================================================
+// CALLABLE — deleteMatch
+// ======================================================
+export const deleteMatch = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
 
+  const matchId = asString(req.data?.matchId);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+  }
+
+  const matchRef = db.collection("matches").doc(matchId);
+  const snap = await matchRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  }
+
+  const match = snap.data() || {};
+  const createdByType = asString(match.createdByType || "player");
+  const createurUid = asString(match.createurUid);
+  const clubId = asString(match.clubId || match.createdById);
+
+  if (createdByType === "club") {
+    const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    const club = clubSnap.data() || {};
+    const adminUid = asString(club.adminUid);
+
+    if (adminUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+  } else {
+    if (createurUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_MATCH_OWNER");
+    }
+  }
+
+  await matchRef.delete();
+
+  logger.info("deleteMatch ok", {
+    matchId,
+    uid,
+    createdByType,
+    clubId: clubId || null,
+  });
+
+  return { ok: true, matchId };
+});
+
+// ======================================================
+// CALLABLE — updateMatch
+// ======================================================
+export const updateMatch = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const matchId = asString(req.data?.matchId);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+  }
+
+  const matchRef = db.collection("matches").doc(matchId);
+  const snap = await matchRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  }
+
+  const existing = snap.data() || {};
+  const createdByType = asString(existing.createdByType || "player");
+  const createurUid = asString(existing.createurUid);
+  const clubId = asString(existing.clubId || existing.createdById);
+
+  if (createdByType === "club") {
+    const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    const club = clubSnap.data() || {};
+    const adminUid = asString(club.adminUid);
+
+    if (adminUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+  } else {
+    if (createurUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_MATCH_OWNER");
+    }
+  }
+
+  const patch = {};
+
+  if ("dateHeure" in req.data) {
+    const dateHeure = normalizeDateMs(req.data.dateHeure);
+    if (!dateHeure) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: dateHeure invalid");
+    }
+    if (dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "MATCH_PAST");
+    }
+    patch.dateHeure = dateHeure;
+  }
+
+  if ("niveau" in req.data || "level" in req.data) {
+    const niveauRaw = req.data?.niveau ?? req.data?.level;
+    const niveau = typeof niveauRaw === "number" ? Math.round(niveauRaw) : Number(niveauRaw);
+
+    if (!(Number.isFinite(niveau) && niveau >= 1 && niveau <= 10)) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
+    }
+
+    patch.niveau = niveau;
+    patch.level = niveau;
+  }
+
+  if ("description" in req.data) {
+    const descRaw = asString(req.data.description);
+    const desc = descRaw ? descRaw.trim() : "";
+
+    if (desc.length > 0) {
+      patch.description = desc;
+    } else {
+      patch.description = FieldValue.delete();
+    }
+  }
+
+  patch.updatedAt = FieldValue.serverTimestamp();
+
+  await matchRef.set(patch, { merge: true });
+
+  logger.info("updateMatch ok", {
+    matchId,
+    uid,
+    createdByType,
+    clubId: clubId || null,
+    changedKeys: Object.keys(patch),
+  });
+
+  return { ok: true, matchId };
+});
 // ======================================================
 // pushNearbyMatch (CALLABLE) — COMPAT PROD
 // data: { matchId: string }
