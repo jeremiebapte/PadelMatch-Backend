@@ -740,6 +740,88 @@ export const createMatch = onCall(RUNTIME, async (req) => {
   }
 });
 // ======================================================
+// CALLABLE — createClubAvailability
+// ======================================================
+export const createClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const data = req.data ?? {};
+
+  const clubId = asString(data.clubId);
+  const clubName = asString(data.clubName);
+  const courtLabel = asString(data.courtLabel).trim();
+  const dateHeure = normalizeDateMs(data.dateHeure);
+  const durationMinutes = Number(data.durationMinutes || 90);
+  const price = data.price === null || data.price === undefined || data.price === ""
+    ? null
+    : Number(data.price);
+
+  const descriptionRaw = asString(data.description);
+  const description = descriptionRaw ? descriptionRaw.trim() : "";
+
+  const joinPlayers = data.joinPlayers === true;
+  const reserveFullCourt = data.reserveFullCourt === true;
+
+  if (!clubId) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubId missing");
+  if (!clubName) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubName missing");
+  if (!courtLabel) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: courtLabel missing");
+  if (!dateHeure) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: dateHeure missing");
+  if (dateHeure <= Date.now()) throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+
+  if (!(Number.isFinite(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: durationMinutes invalid");
+  }
+
+  if (price !== null && !(Number.isFinite(price) && price >= 0 && price <= 500)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: price invalid");
+  }
+
+  if (!joinPlayers && !reserveFullCourt) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: at least one action required");
+  }
+
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+  if (!clubSnap.exists) {
+    throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+  }
+
+  const club = clubSnap.data() || {};
+  if (asString(club.adminUid) !== uid) {
+    throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+  }
+
+  const doc = {
+    clubId,
+    clubName,
+    courtLabel,
+    dateHeure,
+    durationMinutes,
+    ...(price !== null ? { price } : {}),
+    ...(description ? { description } : {}),
+    joinPlayers,
+    reserveFullCourt,
+    participants: [],
+    status: "open",
+    createdByUid: uid,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  const ref = await db.collection("clubAvailabilities").add(doc);
+
+  logger.info("createClubAvailability ok", {
+    availabilityId: ref.id,
+    clubId,
+    uid,
+    courtLabel,
+    dateHeure,
+    joinPlayers,
+    reserveFullCourt,
+  });
+
+  return { ok: true, availabilityId: ref.id };
+});
+
+// ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
 // ======================================================
