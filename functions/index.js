@@ -572,8 +572,18 @@ async function pushNearbyForMatchId(matchId) {
 export const createMatch = onCall(RUNTIME, async (req) => {
   try {
     const uid = assertAuth(req);
-
     const data = req.data ?? {};
+
+    const createdByType = data?.createdByType === "club" ? "club" : "player";
+    const createdById =
+      typeof data?.createdById === "string" && data.createdById.length > 0
+        ? data.createdById
+        : uid;
+
+    const clubId =
+      typeof data?.clubId === "string" && data.clubId.length > 0
+        ? data.clubId
+        : null;
 
     const placeId = asString(data?.placeId);
     const lieu = asString(data?.lieu || data?.placeName || "Club");
@@ -600,39 +610,45 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
     }
 
+    if (createdByType === "club" && !clubId) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubId missing");
+    }
+
     const jm = joueursManquants === 1 || joueursManquants === 2 ? joueursManquants : null;
     if (jm === null) {
       throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: joueursManquants must be 1 or 2");
     }
 
-    let overlap = false;
-    try {
-      overlap = await hasTimeOverlap(uid, dateHeure);
-    } catch (e) {
-      logger.error("createMatch hasTimeOverlap crash", {
-        uid,
-        dateHeure,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
-    }
-    if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+    if (createdByType === "player") {
+      let overlap = false;
+      try {
+        overlap = await hasTimeOverlap(uid, dateHeure);
+      } catch (e) {
+        logger.error("createMatch hasTimeOverlap crash", {
+          uid,
+          dateHeure,
+          err: String(e?.message ?? e),
+        });
+        throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
+      }
+      if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
 
-    let placeConflict = false;
-    try {
-      placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
-    } catch (e) {
-      logger.error("createMatch hasPlaceConflictKm1 crash", {
-        uid,
-        placeId,
-        lat,
-        lng,
-        dateHeure,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
+      let placeConflict = false;
+      try {
+        placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
+      } catch (e) {
+        logger.error("createMatch hasPlaceConflictKm1 crash", {
+          uid,
+          placeId,
+          lat,
+          lng,
+          dateHeure,
+          err: String(e?.message ?? e),
+        });
+        throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
+      }
+      if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
     }
-    if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
 
     const participants = [uid];
     if (jm === 1) {
@@ -668,6 +684,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       niveau,
       level: niveau,
       createurUid: uid,
+      createdByType,
+      createdById,
+      ...(clubId ? { clubId } : {}),
       participants,
       ...(createurPseudo ? { createurPseudo } : {}),
       ...(createurAvatar ? { createurAvatar } : {}),
@@ -685,6 +704,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     } catch (e) {
       logger.error("createMatch Firestore add failed", {
         uid,
+        createdByType,
+        createdById,
+        clubId,
         placeId,
         dateHeure,
         niveau,
@@ -696,6 +718,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     logger.info("createMatch ok", {
       matchId: ref.id,
       uid,
+      createdByType,
+      createdById,
+      clubId,
       placeId,
       dateHeure,
       niveau,
@@ -714,7 +739,6 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     throw new HttpsError("internal", "CREATE_MATCH_INTERNAL");
   }
 });
-
 // ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
