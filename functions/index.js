@@ -386,31 +386,96 @@ async function hasTimeOverlap(uid, targetMs) {
   const end = targetMs + 2 * HOUR_MS;
   const friendPrefix = friendMarkerPrefix(uid);
 
-  const [createdSnap, joinedSnap, windowSnap] = await Promise.all([
+  const [
+    createdSnap,
+    joinedSnap,
+    matchWindowSnap,
+    availabilityJoinedSnap,
+    availabilityWindowSnap,
+  ] = await Promise.all([
     db.collection("matches")
       .where("createurUid", "==", uid)
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(1)
       .get(),
+
     db.collection("matches")
       .where("participants", "array-contains", uid)
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(1)
       .get(),
+
     db.collection("matches")
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(50)
+      .get(),
+
+    db.collection("clubAvailabilities")
+      .where("participants", "array-contains", uid)
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(1)
+      .get(),
+
+    db.collection("clubAvailabilities")
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(50)
       .get(),
   ]);
 
-  if (!createdSnap.empty || !joinedSnap.empty) return true;
+  if (!createdSnap.empty || !joinedSnap.empty || !availabilityJoinedSnap.empty) {
+    return true;
+  }
+
+  for (const doc of matchWindowSnap.docs) {
+    const data = doc.data() || {};
+    const parts = Array.isArray(data.participants) ? data.participants : [];
+    if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
+      return true;
+    }
+  }
+
+  for (const doc of availabilityWindowSnap.docs) {
+    const data = doc.data() || {};
+    const parts = Array.isArray(data.participants) ? data.participants : [];
+    if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function hasClubAvailabilityOverlap(uid, targetMs) {
+  const start = targetMs - 2 * HOUR_MS;
+  const end = targetMs + 2 * HOUR_MS;
+  const friendPrefix = friendMarkerPrefix(uid);
+
+  const [joinedSnap, windowSnap] = await Promise.all([
+    db.collection("clubAvailabilities")
+      .where("participants", "array-contains", uid)
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(1)
+      .get(),
+
+    db.collection("clubAvailabilities")
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(50)
+      .get(),
+  ]);
+
+  if (!joinedSnap.empty) return true;
 
   for (const doc of windowSnap.docs) {
     const data = doc.data() || {};
     const parts = Array.isArray(data.participants) ? data.participants : [];
+
     if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
       return true;
     }
@@ -819,6 +884,102 @@ export const createClubAvailability = onCall(RUNTIME, async (req) => {
   });
 
   return { ok: true, availabilityId: ref.id };
+});
+
+// ======================================================
+// CALLABLE — joinClubAvailability
+// ======================================================
+export const joinClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  const withFriend = req.data?.withFriend === true;
+  const friendNameRaw = asString(req.data?.friendName);
+  const friendName = friendNameRaw.trim() || "Joueur";
+
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  if (withFriend && !isValidFriendName(friendName)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: friendName invalid");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const status = asString(data.status || "open");
+    const joinPlayers = data.joinPlayers === true;
+    const dateHeure = normalizeDateMs(data.dateHeure);
+
+    if (status !== "open") {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
+    }
+
+    if (!joinPlayers) {
+      throw new HttpsError("failed-precondition", "JOIN_PLAYERS_DISABLED");
+    }
+
+    if (!dateHeure || dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+    }
+
+	const matchOverlap = await hasTimeOverlap(uid, dateHeure);
+if (matchOverlap) {
+  throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+}
+
+
+
+    const current = Array.isArray(data.participants) ? data.participants.slice() : [];
+
+    const already =
+      current.includes(uid) ||
+      current.some((p) => typeof p === "string" && p.startsWith(friendMarkerPrefix(uid)));
+
+    if (already) {
+      throw new HttpsError("already-exists", "ALREADY_JOINED");
+    }
+
+    const needed = withFriend ? 2 : 1;
+
+    if (current.length + needed > 4) {
+      throw new HttpsError("failed-precondition", withFriend ? "NEED_TWO_SLOTS" : "NEED_ONE_SLOT");
+    }
+
+    current.push(uid);
+
+    if (withFriend) {
+      current.push(`${friendMarkerPrefix(uid)}${friendName}`);
+    }
+
+    const patch = {
+      participants: current,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (current.length >= 4) {
+      patch.status = "full";
+      patch.completedAt = FieldValue.serverTimestamp();
+    }
+
+    tx.update(ref, patch);
+  });
+
+  logger.info("joinClubAvailability ok", {
+    availabilityId,
+    uid,
+    withFriend,
+  });
+
+  return { ok: true, availabilityId };
 });
 
 // ======================================================
