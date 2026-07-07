@@ -250,6 +250,20 @@ function copyFor(type, subtype, ctx = {}) {
     };
   }
 
+if (type === "club_availability" && subtype === "join") {
+  return {
+    title: "Nouveau joueur inscrit 🎾",
+    body: `${pseudo} a rejoint ${lieu}.`,
+  };
+}
+
+if (type === "club_availability" && subtype === "full") {
+  return {
+    title: "Terrain complet 🎉",
+    body: `${lieu} est désormais complet.`,
+  };
+}
+
   if (type === "chat" && subtype === "message") {
     return {
       title: "Nouveau message",
@@ -907,6 +921,8 @@ export const joinClubAvailability = onCall(RUNTIME, async (req) => {
 
   const ref = db.collection("clubAvailabilities").doc(availabilityId);
 
+let notifyPayload = null;
+
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
 
@@ -970,13 +986,168 @@ if (matchOverlap) {
       patch.completedAt = FieldValue.serverTimestamp();
     }
 
+notifyPayload = {
+  clubId: asString(data.clubId),
+  courtLabel: asString(data.courtLabel || "votre terrain"),
+  becameFull: current.length >= 4,
+};
+
     tx.update(ref, patch);
   });
+
+if (notifyPayload?.clubId) {
+  try {
+    const clubSnap = await db.collection("clubs").doc(notifyPayload.clubId).get();
+    const adminUid = asString(clubSnap.get("adminUid"));
+
+    if (adminUid) {
+      const [tokens, pseudo] = await Promise.all([
+        tokensOf(adminUid),
+        pseudoOf(uid),
+      ]);
+
+      if (tokens.length) {
+        const joinCopy = copyFor("club_availability", "join", {
+          pseudo,
+          lieu: notifyPayload.courtLabel,
+        });
+
+        await send(tokens, {
+          title: joinCopy.title,
+          body: joinCopy.body,
+          data: {
+            type: "club_availability",
+            subtype: "join",
+            availabilityId,
+          },
+        });
+
+        if (notifyPayload.becameFull) {
+          const fullCopy = copyFor("club_availability", "full", {
+            lieu: notifyPayload.courtLabel,
+          });
+
+          await send(tokens, {
+            title: fullCopy.title,
+            body: fullCopy.body,
+            data: {
+              type: "club_availability",
+              subtype: "full",
+              availabilityId,
+            },
+          });
+        }
+      }
+    }
+  } catch (e) {
+    logger.warn("joinClubAvailability notification failed", {
+      availabilityId,
+      uid,
+      err: String(e?.message ?? e),
+    });
+  }
+}
 
   logger.info("joinClubAvailability ok", {
     availabilityId,
     uid,
     withFriend,
+  });
+
+  return { ok: true, availabilityId };
+});
+
+// ======================================================
+// CALLABLE — leaveClubAvailability
+// ======================================================
+export const leaveClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+  let notifyPayload = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const current = Array.isArray(data.participants) ? data.participants : [];
+    const friendPrefix = friendMarkerPrefix(uid);
+
+    const wasIn = current.some((p) =>
+      p === uid || (typeof p === "string" && p.startsWith(friendPrefix))
+    );
+
+    if (!wasIn) {
+      throw new HttpsError("failed-precondition", "NOT_IN_AVAILABILITY");
+    }
+
+    const nextParticipants = current.filter((p) =>
+      p !== uid && !(typeof p === "string" && p.startsWith(friendPrefix))
+    );
+
+    const patch = {
+      participants: nextParticipants,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (asString(data.status) === "full" && nextParticipants.length < 4) {
+      patch.status = "open";
+      patch.reopenedAt = FieldValue.serverTimestamp();
+    }
+
+    notifyPayload = {
+      clubId: asString(data.clubId),
+      courtLabel: asString(data.courtLabel || "votre terrain"),
+    };
+
+    tx.update(ref, patch);
+  });
+
+  if (notifyPayload?.clubId) {
+    try {
+      const clubSnap = await db.collection("clubs").doc(notifyPayload.clubId).get();
+      const adminUid = asString(clubSnap.get("adminUid"));
+
+      if (adminUid) {
+        const [tokens, pseudo] = await Promise.all([
+          tokensOf(adminUid),
+          pseudoOf(uid),
+        ]);
+
+        if (tokens.length) {
+          await send(tokens, {
+            title: "Désistement joueur",
+            body: `${pseudo} s’est désisté de ${notifyPayload.courtLabel}.`,
+            data: {
+              type: "club_availability",
+              subtype: "leave",
+              availabilityId,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn("leaveClubAvailability notification failed", {
+        availabilityId,
+        uid,
+        err: String(e?.message ?? e),
+      });
+    }
+  }
+
+  logger.info("leaveClubAvailability ok", {
+    availabilityId,
+    uid,
   });
 
   return { ok: true, availabilityId };
