@@ -1341,6 +1341,108 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
 });
 
 // ======================================================
+// CALLABLE — confirmClubReservation
+// ======================================================
+export const confirmClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const reservationId = asString(req.data?.reservationId);
+  if (!reservationId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: reservationId missing");
+  }
+
+  const ref = db.collection("clubReservations").doc(reservationId);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "RESERVATION_NOT_FOUND");
+    }
+
+    const reservation = snap.data() || {};
+    const clubId = asString(reservation.clubId);
+
+    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    if (asString(reservation.status) !== "pending") {
+      throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
+    }
+
+    tx.update(ref, {
+      status: "confirmed",
+      confirmedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  logger.info("confirmClubReservation ok", {
+    reservationId,
+    uid,
+  });
+
+  return { ok: true, reservationId };
+});
+
+// ======================================================
+// CALLABLE — rejectClubReservation
+// ======================================================
+export const rejectClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const reservationId = asString(req.data?.reservationId);
+  if (!reservationId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: reservationId missing");
+  }
+
+  const ref = db.collection("clubReservations").doc(reservationId);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "RESERVATION_NOT_FOUND");
+    }
+
+    const reservation = snap.data() || {};
+    const clubId = asString(reservation.clubId);
+
+    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    if (asString(reservation.status) !== "pending") {
+      throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
+    }
+
+    tx.update(ref, {
+      status: "rejected",
+      rejectedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  logger.info("rejectClubReservation ok", {
+    reservationId,
+    uid,
+  });
+
+  return { ok: true, reservationId };
+});
+
+// ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
 // ======================================================
