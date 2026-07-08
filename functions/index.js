@@ -1230,7 +1230,6 @@ export const closeClubAvailability = onCall(RUNTIME, async (req) => {
 
   return { ok: true, availabilityId };
 });
-
 // ======================================================
 // CALLABLE — requestClubReservation
 // ======================================================
@@ -1241,55 +1240,65 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
   const phone = asString(req.data?.phone);
 
   if (!availabilityId) {
-    throw new HttpsError(
-      "invalid-argument",
-      "INVALID_ARGUMENT: availabilityId missing"
-    );
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
   }
 
   if (!phone) {
-    throw new HttpsError(
-      "invalid-argument",
-      "INVALID_ARGUMENT: phone missing"
-    );
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: phone missing");
   }
 
-  const availabilityRef = db
-    .collection("clubAvailabilities")
-    .doc(availabilityId);
-
+  const availabilityRef = db.collection("clubAvailabilities").doc(availabilityId);
   const availabilitySnap = await availabilityRef.get();
 
   if (!availabilitySnap.exists) {
-    throw new HttpsError(
-      "not-found",
-      "AVAILABILITY_NOT_FOUND"
-    );
+    throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
   }
 
   const availability = availabilitySnap.data() || {};
+  const dateHeure = normalizeDateMs(availability.dateHeure);
 
   if (availability.status !== "open") {
-    throw new HttpsError(
-      "failed-precondition",
-      "AVAILABILITY_NOT_OPEN"
-    );
+    throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
   }
 
   if (availability.reserveFullCourt !== true) {
-    throw new HttpsError(
-      "failed-precondition",
-      "FULL_COURT_DISABLED"
-    );
+    throw new HttpsError("failed-precondition", "FULL_COURT_DISABLED");
+  }
+
+  if (!dateHeure || dateHeure <= Date.now()) {
+    throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+  }
+
+  const overlap = await hasTimeOverlap(uid, dateHeure);
+  if (overlap) {
+    throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+  }
+
+  const existingForPlayerSnap = await db.collection("clubReservations")
+    .where("availabilityId", "==", availabilityId)
+    .where("playerUid", "==", uid)
+    .where("status", "in", ["pending", "confirmed"])
+    .limit(1)
+    .get();
+
+  if (!existingForPlayerSnap.empty) {
+    throw new HttpsError("already-exists", "RESERVATION_ALREADY_EXISTS");
+  }
+
+  const alreadyConfirmedSnap = await db.collection("clubReservations")
+    .where("availabilityId", "==", availabilityId)
+    .where("status", "==", "confirmed")
+    .limit(1)
+    .get();
+
+  if (!alreadyConfirmedSnap.empty) {
+    throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
   }
 
   const userSnap = await db.collection("users").doc(uid).get();
 
   if (!userSnap.exists) {
-    throw new HttpsError(
-      "not-found",
-      "USER_NOT_FOUND"
-    );
+    throw new HttpsError("not-found", "USER_NOT_FOUND");
   }
 
   const user = userSnap.data() || {};
@@ -1301,16 +1310,12 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
     clubName: asString(availability.clubName),
 
     playerUid: uid,
-    playerName: asString(
-      user.pseudo ||
-      user.username ||
-      ""
-    ),
+    playerName: asString(user.pseudo || user.username || ""),
     playerPhone: phone,
 
     courtLabel: asString(availability.courtLabel),
 
-    dateHeure: availability.dateHeure,
+    dateHeure,
     durationMinutes: availability.durationMinutes,
 
     price:
@@ -1324,9 +1329,7 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  const ref = await db
-    .collection("clubReservations")
-    .add(reservation);
+  const ref = await db.collection("clubReservations").add(reservation);
 
   logger.info("requestClubReservation ok", {
     reservationId: ref.id,
