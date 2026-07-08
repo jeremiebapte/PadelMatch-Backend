@@ -462,7 +462,31 @@ async function hasTimeOverlap(uid, targetMs) {
   }
 
   return false;
+
 }
+
+async function hasReservationOverlap(uid, targetMs) {
+  const start = targetMs - 2 * HOUR_MS;
+  const end = targetMs + 2 * HOUR_MS;
+
+  const snap = await db.collection("clubReservations")
+    .where("playerUid", "==", uid)
+    .where("status", "in", ["pending", "confirmed"])
+    .limit(50)
+    .get();
+
+  for (const doc of snap.docs) {
+    const data = doc.data() || {};
+    const ms = normalizeDateMs(data.dateHeure);
+
+    if (ms >= start && ms <= end) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 
 async function hasClubAvailabilityOverlap(uid, targetMs) {
   const start = targetMs - 2 * HOUR_MS;
@@ -711,6 +735,21 @@ export const createMatch = onCall(RUNTIME, async (req) => {
         throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
       }
       if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+	let reservationOverlap = false;
+try {
+  reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+} catch (e) {
+  logger.error("createMatch hasReservationOverlap crash", {
+    uid,
+    dateHeure,
+    err: String(e?.message ?? e),
+  });
+  throw new HttpsError("internal", "RESERVATION_OVERLAP_INTERNAL");
+}
+
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
 
       let placeConflict = false;
       try {
@@ -948,8 +987,13 @@ let notifyPayload = null;
     }
 
 	const matchOverlap = await hasTimeOverlap(uid, dateHeure);
-if (matchOverlap) {
-  throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+	if (matchOverlap) {
+	  throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+}
+
+const reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
 }
 
 
@@ -1274,6 +1318,11 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
     throw new HttpsError("failed-precondition", "TIME_OVERLAP");
   }
 
+const reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
+
   const existingForPlayerSnap = await db.collection("clubReservations")
     .where("availabilityId", "==", availabilityId)
     .where("playerUid", "==", uid)
@@ -1331,11 +1380,50 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
 
   const ref = await db.collection("clubReservations").add(reservation);
 
-  logger.info("requestClubReservation ok", {
+try {
+  const clubId = asString(availability.clubId);
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+  if (clubSnap.exists) {
+    const adminUid = asString(clubSnap.get("adminUid"));
+
+    if (adminUid) {
+      const tokens = await tokensOf(adminUid);
+
+      if (tokens.length) {
+        const playerName = asString(user.pseudo || user.username || "");
+        const courtLabel = asString(availability.courtLabel || "ce terrain");
+
+        await send(tokens, {
+          title: "Nouvelle demande de réservation 🎾",
+          body: playerName
+            ? `${playerName} souhaite réserver ${courtLabel}.`
+            : `Un joueur souhaite réserver ${courtLabel}.`,
+          data: {
+            type: "club_reservation",
+            subtype: "request",
+            reservationId: ref.id,
+            availabilityId,
+            clubId,
+          },
+        });
+      }
+    }
+  }
+} catch (e) {
+  logger.warn("requestClubReservation notification failed", {
     reservationId: ref.id,
     availabilityId,
     uid,
+    err: String(e?.message ?? e),
   });
+}
+
+logger.info("requestClubReservation ok", {
+  reservationId: ref.id,
+  availabilityId,
+  uid,
+});
 
   return {
     ok: true,
@@ -1354,19 +1442,34 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
     throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: reservationId missing");
   }
 
-  const ref = db.collection("clubReservations").doc(reservationId);
+  const reservationRef = db.collection("clubReservations").doc(reservationId);
+	
+let notifyPayload = null;
 
   await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
+    const reservationSnap = await tx.get(reservationRef);
 
-    if (!snap.exists) {
+    if (!reservationSnap.exists) {
       throw new HttpsError("not-found", "RESERVATION_NOT_FOUND");
     }
 
-    const reservation = snap.data() || {};
+    const reservation = reservationSnap.data() || {};
     const clubId = asString(reservation.clubId);
+    const availabilityId = asString(reservation.availabilityId);
+    const playerUid = asString(reservation.playerUid);
+    const dateHeure = normalizeDateMs(reservation.dateHeure);
 
-    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubId || !availabilityId || !playerUid || !dateHeure) {
+      throw new HttpsError("failed-precondition", "RESERVATION_INVALID");
+    }
+
+    if (dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "RESERVATION_PAST");
+    }
+
+    const clubRef = db.collection("clubs").doc(clubId);
+    const clubSnap = await tx.get(clubRef);
+
     if (!clubSnap.exists) {
       throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
     }
@@ -1379,12 +1482,100 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
       throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
     }
 
-    tx.update(ref, {
+    const availabilityRef = db.collection("clubAvailabilities").doc(availabilityId);
+    const availabilitySnap = await tx.get(availabilityRef);
+
+    if (!availabilitySnap.exists) {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const availability = availabilitySnap.data() || {};
+    const availabilityStatus = asString(availability.status || "open");
+
+    if (availabilityStatus !== "open") {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
+    }
+
+    const alreadyConfirmedSnap = await tx.get(
+      db.collection("clubReservations")
+        .where("availabilityId", "==", availabilityId)
+        .where("status", "==", "confirmed")
+        .limit(1)
+    );
+
+    if (!alreadyConfirmedSnap.empty) {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
+    }
+
+    const matchOverlap = await hasTimeOverlap(playerUid, dateHeure);
+    if (matchOverlap) {
+      throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+    }
+
+    const reservationOverlapSnap = await tx.get(
+      db.collection("clubReservations")
+        .where("playerUid", "==", playerUid)
+        .where("status", "in", ["pending", "confirmed"])
+        .limit(50)
+    );
+
+    for (const doc of reservationOverlapSnap.docs) {
+      if (doc.id === reservationId) continue;
+
+      const data = doc.data() || {};
+      const ms = normalizeDateMs(data.dateHeure);
+      const start = dateHeure - 2 * HOUR_MS;
+      const end = dateHeure + 2 * HOUR_MS;
+
+      if (ms >= start && ms <= end) {
+        throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+      }
+    }
+
+notifyPayload = {
+  playerUid,
+  availabilityId,
+  clubId,
+  courtLabel: asString(reservation.courtLabel || "votre terrain"),
+};
+
+    tx.update(reservationRef, {
       status: "confirmed",
       confirmedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    tx.update(availabilityRef, {
+      status: "reserved",
+      reservedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   });
+
+if (notifyPayload?.playerUid) {
+  try {
+    const tokens = await tokensOf(notifyPayload.playerUid);
+
+    if (tokens.length) {
+      await send(tokens, {
+        title: "Réservation confirmée ✅",
+        body: `Le club a confirmé votre réservation pour ${notifyPayload.courtLabel}.`,
+        data: {
+          type: "club_reservation",
+          subtype: "confirmed",
+          reservationId,
+          availabilityId: notifyPayload.availabilityId,
+          clubId: notifyPayload.clubId,
+        },
+      });
+    }
+  } catch (e) {
+    logger.warn("confirmClubReservation notification failed", {
+      reservationId,
+      err: String(e?.message ?? e),
+    });
+  }
+}
 
   logger.info("confirmClubReservation ok", {
     reservationId,
@@ -1393,6 +1584,7 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
 
   return { ok: true, reservationId };
 });
+
 
 // ======================================================
 // CALLABLE — rejectClubReservation
@@ -1407,7 +1599,9 @@ export const rejectClubReservation = onCall(RUNTIME, async (req) => {
 
   const ref = db.collection("clubReservations").doc(reservationId);
 
-  await db.runTransaction(async (tx) => {
+let notifyPayload = null;
+
+await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
 
     if (!snap.exists) {
@@ -1430,12 +1624,44 @@ export const rejectClubReservation = onCall(RUNTIME, async (req) => {
       throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
     }
 
+notifyPayload = {
+  playerUid: asString(reservation.playerUid),
+  availabilityId: asString(reservation.availabilityId),
+  clubId,
+  courtLabel: asString(reservation.courtLabel || "votre terrain"),
+};
+
     tx.update(ref, {
       status: "rejected",
       rejectedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
+
+if (notifyPayload?.playerUid) {
+  try {
+    const tokens = await tokensOf(notifyPayload.playerUid);
+
+    if (tokens.length) {
+      await send(tokens, {
+        title: "Réservation refusée",
+        body: `Le club n’a pas pu accepter votre demande pour ${notifyPayload.courtLabel}.`,
+        data: {
+          type: "club_reservation",
+          subtype: "rejected",
+          reservationId,
+          availabilityId: notifyPayload.availabilityId,
+          clubId: notifyPayload.clubId,
+        },
+      });
+    }
+  } catch (e) {
+    logger.warn("rejectClubReservation notification failed", {
+      reservationId,
+      err: String(e?.message ?? e),
+    });
+  }
+}
 
   logger.info("rejectClubReservation ok", {
     reservationId,
@@ -1487,6 +1713,10 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
   if (await hasTimeOverlap(uid, dateHeure)) {
     throw new HttpsError("failed-precondition", "TIME_OVERLAP");
   }
+
+if (await hasReservationOverlap(uid, dateHeure)) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
 
   await db.runTransaction(async (tx) => {
     const fresh = await tx.get(matchRef);
