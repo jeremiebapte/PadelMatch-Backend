@@ -1154,6 +1154,193 @@ export const leaveClubAvailability = onCall(RUNTIME, async (req) => {
 });
 
 // ======================================================
+// CALLABLE — closeClubAvailability
+// ======================================================
+export const closeClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+  let notifyPayload = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const clubId = asString(data.clubId);
+
+    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    const participants = Array.isArray(data.participants) ? data.participants : [];
+
+    notifyPayload = {
+      courtLabel: asString(data.courtLabel || "votre terrain"),
+      participantUids: cleanUids(participants),
+    };
+
+    tx.update(ref, {
+      status: "closed",
+      closedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  if (notifyPayload?.participantUids?.length) {
+    try {
+      const tokenMap = await getTokens(notifyPayload.participantUids);
+      const tokens = Array.from(tokenMap.values()).flat();
+
+      await send(tokens, {
+        title: "Créneau indisponible",
+        body: `${notifyPayload.courtLabel} n’est plus disponible.`,
+        data: {
+          type: "club_availability",
+          subtype: "closed",
+          availabilityId,
+        },
+      });
+    } catch (e) {
+      logger.warn("closeClubAvailability notification failed", {
+        availabilityId,
+        err: String(e?.message ?? e),
+      });
+    }
+  }
+
+  logger.info("closeClubAvailability ok", {
+    availabilityId,
+    uid,
+  });
+
+  return { ok: true, availabilityId };
+});
+
+// ======================================================
+// CALLABLE — requestClubReservation
+// ======================================================
+export const requestClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  const phone = asString(req.data?.phone);
+
+  if (!availabilityId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_ARGUMENT: availabilityId missing"
+    );
+  }
+
+  if (!phone) {
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_ARGUMENT: phone missing"
+    );
+  }
+
+  const availabilityRef = db
+    .collection("clubAvailabilities")
+    .doc(availabilityId);
+
+  const availabilitySnap = await availabilityRef.get();
+
+  if (!availabilitySnap.exists) {
+    throw new HttpsError(
+      "not-found",
+      "AVAILABILITY_NOT_FOUND"
+    );
+  }
+
+  const availability = availabilitySnap.data() || {};
+
+  if (availability.status !== "open") {
+    throw new HttpsError(
+      "failed-precondition",
+      "AVAILABILITY_NOT_OPEN"
+    );
+  }
+
+  if (availability.reserveFullCourt !== true) {
+    throw new HttpsError(
+      "failed-precondition",
+      "FULL_COURT_DISABLED"
+    );
+  }
+
+  const userSnap = await db.collection("users").doc(uid).get();
+
+  if (!userSnap.exists) {
+    throw new HttpsError(
+      "not-found",
+      "USER_NOT_FOUND"
+    );
+  }
+
+  const user = userSnap.data() || {};
+
+  const reservation = {
+    availabilityId,
+
+    clubId: asString(availability.clubId),
+    clubName: asString(availability.clubName),
+
+    playerUid: uid,
+    playerName: asString(
+      user.pseudo ||
+      user.username ||
+      ""
+    ),
+    playerPhone: phone,
+
+    courtLabel: asString(availability.courtLabel),
+
+    dateHeure: availability.dateHeure,
+    durationMinutes: availability.durationMinutes,
+
+    price:
+      availability.price === undefined
+        ? null
+        : availability.price,
+
+    status: "pending",
+
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  const ref = await db
+    .collection("clubReservations")
+    .add(reservation);
+
+  logger.info("requestClubReservation ok", {
+    reservationId: ref.id,
+    availabilityId,
+    uid,
+  });
+
+  return {
+    ok: true,
+    reservationId: ref.id,
+  };
+});
+
+// ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
 // ======================================================
