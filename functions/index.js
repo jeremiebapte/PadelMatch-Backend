@@ -1050,38 +1050,38 @@ if (notifyPayload?.clubId) {
         pseudoOf(uid),
       ]);
 
-      if (tokens.length) {
-        const joinCopy = copyFor("club_availability", "join", {
-          pseudo,
-          lieu: notifyPayload.courtLabel,
-        });
+        if (tokens.length) {
+          if (notifyPayload.becameFull) {
+            const fullCopy = copyFor("club_availability", "full", {
+              lieu: notifyPayload.courtLabel,
+            });
 
-        await send(tokens, {
-          title: joinCopy.title,
-          body: joinCopy.body,
-          data: {
-            type: "club_availability",
-            subtype: "join",
-            availabilityId,
-          },
-        });
+            await send(tokens, {
+              title: fullCopy.title,
+              body: fullCopy.body,
+              data: {
+                type: "club_availability",
+                subtype: "full",
+                availabilityId,
+              },
+            });
+          } else {
+            const joinCopy = copyFor("club_availability", "join", {
+              pseudo,
+              lieu: notifyPayload.courtLabel,
+            });
 
-        if (notifyPayload.becameFull) {
-          const fullCopy = copyFor("club_availability", "full", {
-            lieu: notifyPayload.courtLabel,
-          });
-
-          await send(tokens, {
-            title: fullCopy.title,
-            body: fullCopy.body,
-            data: {
-              type: "club_availability",
-              subtype: "full",
-              availabilityId,
-            },
-          });
+            await send(tokens, {
+              title: joinCopy.title,
+              body: joinCopy.body,
+              data: {
+                type: "club_availability",
+                subtype: "join",
+                availabilityId,
+              },
+            });
+          }
         }
-      }
     }
   } catch (e) {
     logger.warn("joinClubAvailability notification failed", {
