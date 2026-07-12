@@ -204,6 +204,162 @@ async function pseudoOf(uid) {
   }
 }
 
+// ======================================================
+// CLUB DATA FOUNDATION
+// ======================================================
+
+function recordClubMatchPlayer(
+  tx,
+  {
+    matchRef,
+    playerUid,
+    playerName,
+    playerPhone,
+    joinedWithFriend,
+    friendName,
+    platform,
+    appVersion,
+  }
+) {
+  const contactRef = matchRef
+    .collection("playerContacts")
+    .doc(playerUid);
+
+  tx.set(
+    contactRef,
+    {
+      playerUid,
+      playerName,
+      playerPhone,
+
+      joinedWithFriend,
+      ...(joinedWithFriend && friendName
+        ? { friendName }
+        : {}),
+
+      status: "active",
+      source: "join_match",
+
+      consentVersion: 1,
+      consentGivenAt: FieldValue.serverTimestamp(),
+
+      ...(platform ? { platform } : {}),
+      ...(appVersion ? { appVersion } : {}),
+
+      joinedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return contactRef;
+}
+
+function updateClubMatchPlayerStatus(
+  tx,
+  {
+    matchRef,
+    playerUid,
+    status,
+  }
+) {
+  const contactRef = matchRef
+    .collection("playerContacts")
+    .doc(playerUid);
+
+  const patch = {
+    status,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (status === "left") {
+    patch.leftAt = FieldValue.serverTimestamp();
+  }
+
+  tx.set(
+    contactRef,
+    patch,
+    { merge: true }
+  );
+
+  return contactRef;
+}
+
+function upsertClubPlayer(
+  tx,
+  {
+    clubRef,
+    playerUid,
+    playerName,
+    playerPhone,
+    matchId,
+    relationExists,
+  }
+) {
+  const relationRef = clubRef
+    .collection("players")
+    .doc(playerUid);
+
+  const patch = {
+    playerUid,
+    playerName,
+    lastPhone: playerPhone,
+
+    lastSeenAt: FieldValue.serverTimestamp(),
+    lastMatchId: matchId,
+    lastInteractionType: "match_join",
+
+    status: "active",
+
+    matchesJoinedCount: FieldValue.increment(1),
+
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  if (!relationExists) {
+    patch.firstSeenAt = FieldValue.serverTimestamp();
+    patch.createdAt = FieldValue.serverTimestamp();
+  }
+
+  tx.set(
+    relationRef,
+    patch,
+    { merge: true }
+  );
+
+  return relationRef;
+}
+
+function appendClubEvent(
+  tx,
+  {
+    eventType,
+    clubId,
+    playerUid,
+    matchId,
+    payload = {},
+  }
+) {
+  const eventRef = db
+    .collection("clubEvents")
+    .doc();
+
+  tx.set(eventRef, {
+    eventType,
+    eventVersion: 1,
+
+    clubId,
+    playerUid,
+    matchId,
+
+    payload,
+
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return eventRef;
+}
+
 async function tokensOf(uid) {
   const u = await db.collection("users").doc(uid).get();
   if (!u.exists) return [];
@@ -2317,126 +2473,629 @@ export const cancelClubReservation = onCall(
 // ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
+// - Match Club: téléphone consenti + contact privé + CRM + event
 // ======================================================
 export const joinMatch = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
 
   const matchId = asString(req.data?.matchId);
-  const joinWithFriend = !!(req.data?.joinWithFriend ?? req.data?.withFriend);
-  const friendNameRaw = asString(req.data?.friendName);
-  const friendName = joinWithFriend ? (friendNameRaw || "Joueur") : null;
+
+  const joinWithFriend = !!(
+    req.data?.joinWithFriend
+    ?? req.data?.withFriend
+  );
+
+  const friendNameRaw =
+    asString(req.data?.friendName);
+
+  const friendName =
+    joinWithFriend
+      ? (friendNameRaw || "Joueur")
+      : null;
+
+  const requestedPhone =
+    normalizeFrenchPhone(req.data?.phone);
+
+  const platform =
+    asString(req.data?.platform)
+      .toLowerCase()
+      .slice(0, 20);
+
+  const appVersion =
+    asString(req.data?.appVersion)
+      .slice(0, 40);
 
   if (!matchId) {
-    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_ARGUMENT: matchId missing"
+    );
   }
 
-  if (joinWithFriend && !isValidFriendName(friendName)) {
-    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: friendName invalid");
+  if (
+    joinWithFriend
+    && !isValidFriendName(friendName)
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_ARGUMENT: friendName invalid"
+    );
   }
 
-  const matchRef = db.collection("matches").doc(matchId);
-  const matchSnap = await matchRef.get();
-  if (!matchSnap.exists) throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  const matchRef =
+    db.collection("matches").doc(matchId);
 
-  const m = matchSnap.data() || {};
-  const dateHeure = normalizeDateMs(m.dateHeure);
-  const createurUid = asString(m.createurUid);
-  const lieu = asString(m.lieu || m.placeName || "le club");
+  const initialMatchSnap =
+    await matchRef.get();
+
+  if (!initialMatchSnap.exists) {
+    throw new HttpsError(
+      "not-found",
+      "MATCH_NOT_FOUND"
+    );
+  }
+
+  const initialMatch =
+    initialMatchSnap.data() || {};
+
+  const dateHeure =
+    normalizeDateMs(initialMatch.dateHeure);
+
+  const createurUid =
+    asString(initialMatch.createurUid);
+
+  const lieu =
+    asString(
+      initialMatch.lieu
+      || initialMatch.placeName
+      || "le club"
+    );
+
+  const initialCreatedByType =
+    asString(
+      initialMatch.createdByType
+      || "player"
+    );
+
+  const initialClubId =
+    asString(initialMatch.clubId);
+
+  const initialIsClubMatch =
+    initialCreatedByType === "club"
+    && initialClubId.length > 0;
 
   if (!dateHeure) {
-    throw new HttpsError("failed-precondition", "FAILED_PRECONDITION: MATCH_INVALID_DATE");
+    throw new HttpsError(
+      "failed-precondition",
+      "FAILED_PRECONDITION: MATCH_INVALID_DATE"
+    );
   }
+
   if (dateHeure <= Date.now()) {
-    throw new HttpsError("failed-precondition", "MATCH_PAST");
-  }
-  if (createurUid && createurUid === uid) {
-    throw new HttpsError("failed-precondition", "FAILED_PRECONDITION: CREATOR_CANNOT_JOIN");
-  }
-
-  if (await hasTimeOverlap(uid, dateHeure)) {
-    throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+    throw new HttpsError(
+      "failed-precondition",
+      "MATCH_PAST"
+    );
   }
 
-if (await hasReservationOverlap(uid, dateHeure)) {
-  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
-}
+  if (
+    createurUid
+    && createurUid === uid
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "FAILED_PRECONDITION: CREATOR_CANNOT_JOIN"
+    );
+  }
+
+  // Le téléphone est obligatoire uniquement pour un match Club.
+  if (
+    initialIsClubMatch
+    && !requestedPhone
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_PHONE"
+    );
+  }
+
+  if (
+    await hasTimeOverlap(
+      uid,
+      dateHeure
+    )
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "TIME_OVERLAP"
+    );
+  }
+
+  if (
+    await hasReservationOverlap(
+      uid,
+      dateHeure
+    )
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "RESERVATION_TIME_OVERLAP"
+    );
+  }
+
+  let resultClubId = "";
+  let resultIsClubMatch = false;
 
   await db.runTransaction(async (tx) => {
-    const fresh = await tx.get(matchRef);
-    if (!fresh.exists) throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+    // --------------------------------------------------
+    // LECTURES
+    // Toutes les lectures restent avant les écritures.
+    // --------------------------------------------------
 
-    const data = fresh.data() || {};
-    const current = Array.isArray(data.participants) ? data.participants.slice() : [];
+    const freshMatchSnap =
+      await tx.get(matchRef);
+
+    if (!freshMatchSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        "MATCH_NOT_FOUND"
+      );
+    }
+
+    const matchData =
+      freshMatchSnap.data() || {};
+
+    const createdByType =
+      asString(
+        matchData.createdByType
+        || "player"
+      );
+
+    const clubId =
+      asString(matchData.clubId);
+
+    const isClubMatch =
+      createdByType === "club"
+      && clubId.length > 0;
+
+    const current =
+      Array.isArray(matchData.participants)
+        ? matchData.participants.slice()
+        : [];
+
+    let userSnap = null;
+    let clubSnap = null;
+    let relationSnap = null;
+    let clubRef = null;
+
+    if (isClubMatch) {
+      if (!requestedPhone) {
+        throw new HttpsError(
+          "invalid-argument",
+          "INVALID_PHONE"
+        );
+      }
+
+      const userRef =
+        db.collection("users").doc(uid);
+
+      clubRef =
+        db.collection("clubs").doc(clubId);
+
+      const relationRef =
+        clubRef.collection("players").doc(uid);
+
+      userSnap =
+        await tx.get(userRef);
+
+      clubSnap =
+        await tx.get(clubRef);
+
+      relationSnap =
+        await tx.get(relationRef);
+
+      if (!userSnap.exists) {
+        throw new HttpsError(
+          "not-found",
+          "USER_NOT_FOUND"
+        );
+      }
+
+      if (!clubSnap.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "CLUB_NOT_FOUND"
+        );
+      }
+    }
+
+    // --------------------------------------------------
+    // VALIDATIONS
+    // --------------------------------------------------
 
     const already =
-      current.includes(uid) ||
-      current.some((p) => typeof p === "string" && p.startsWith(friendMarkerPrefix(uid)));
+      current.includes(uid)
+      || current.some(
+        (participant) =>
+          typeof participant === "string"
+          && participant.startsWith(
+            friendMarkerPrefix(uid)
+          )
+      );
 
-    if (already) throw new HttpsError("already-exists", "ALREADY_JOINED");
-
-    const needed = joinWithFriend ? 2 : 1;
-    if (current.length + needed > MAX_PLAYERS) {
-      throw new HttpsError("failed-precondition", "MATCH_FULL");
+    if (already) {
+      throw new HttpsError(
+        "already-exists",
+        "ALREADY_JOINED"
+      );
     }
+
+    const needed =
+      joinWithFriend ? 2 : 1;
+
+    if (
+      current.length + needed
+      > MAX_PLAYERS
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        joinWithFriend
+          ? "NEED_TWO_SLOTS"
+          : "NEED_ONE_SLOT"
+      );
+    }
+
+    // --------------------------------------------------
+    // ÉCRITURE OPÉRATIONNELLE DU MATCH
+    // --------------------------------------------------
 
     current.push(uid);
 
     if (joinWithFriend) {
-      current.push(`${friendMarkerPrefix(uid)}${friendName}`);
+      current.push(
+        `${friendMarkerPrefix(uid)}${friendName}`
+      );
     }
 
     tx.update(matchRef, {
       participants: current,
-      updatedAt: FieldValue.serverTimestamp(),
+      updatedAt:
+        FieldValue.serverTimestamp(),
     });
+
+    // --------------------------------------------------
+    // DATA PRIVÉE + CRM + EVENT
+    // Uniquement pour les matchs publiés par un Club.
+    // --------------------------------------------------
+
+    if (isClubMatch) {
+      const userData =
+        userSnap.data() || {};
+
+      const playerName =
+        asString(
+          userData.pseudo
+          || userData.username
+          || ""
+        )
+        || "Joueur";
+
+      recordClubMatchPlayer(
+        tx,
+        {
+          matchRef,
+          playerUid: uid,
+          playerName,
+          playerPhone:
+            requestedPhone,
+          joinedWithFriend:
+            joinWithFriend,
+          friendName,
+          platform,
+          appVersion,
+        }
+      );
+
+      upsertClubPlayer(
+        tx,
+        {
+          clubRef,
+          playerUid: uid,
+          playerName,
+          playerPhone:
+            requestedPhone,
+          matchId,
+          relationExists:
+            relationSnap.exists,
+        }
+      );
+
+      appendClubEvent(
+        tx,
+        {
+          eventType:
+            "PLAYER_JOINED_MATCH",
+          clubId,
+          playerUid: uid,
+          matchId,
+          payload: {
+            joinedWithFriend:
+              joinWithFriend,
+            ...(joinWithFriend
+              && friendName
+              ? { friendName }
+              : {}),
+            source: "join_match",
+            platform:
+              platform || null,
+            appVersion:
+              appVersion || null,
+          },
+        }
+      );
+
+      resultClubId = clubId;
+      resultIsClubMatch = true;
+    }
   });
 
-  logger.info("joinMatch ok", { matchId, uid, joinWithFriend });
-  return { ok: true, matchId, lieu };
+  logger.info(
+    "joinMatch ok",
+    {
+      matchId,
+      uid,
+      joinWithFriend,
+      isClubMatch:
+        resultIsClubMatch,
+      clubId:
+        resultClubId || null,
+    }
+  );
+
+  return {
+    ok: true,
+    matchId,
+    lieu,
+    isClubMatch:
+      resultIsClubMatch,
+  };
 });
 
 // ======================================================
 // CALLABLE — leaveMatch
+// - Match Club : historique contact + CRM + event
 // ======================================================
 export const leaveMatch = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
 
-  const matchId = asString(req.data?.matchId);
+  const matchId =
+    asString(req.data?.matchId);
+
   if (!matchId) {
-    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_ARGUMENT: matchId missing"
+    );
   }
 
-  const matchRef = db.collection("matches").doc(matchId);
-  const matchSnap = await matchRef.get();
-  if (!matchSnap.exists) throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  const matchRef =
+    db.collection("matches").doc(matchId);
+
+  let resultClubId = "";
+  let resultIsClubMatch = false;
 
   await db.runTransaction(async (tx) => {
-    const fresh = await tx.get(matchRef);
-    if (!fresh.exists) throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+    // --------------------------------------------------
+    // LECTURE DU MATCH
+    // --------------------------------------------------
 
-    const data = fresh.data() || {};
-    const current = Array.isArray(data.participants) ? data.participants.slice() : [];
+    const freshMatchSnap =
+      await tx.get(matchRef);
 
-    const beforeLen = current.length;
-    const filtered = current.filter((p) => {
-      if (p === uid) return false;
-      if (typeof p === "string" && p.startsWith(friendMarkerPrefix(uid))) return false;
-      return true;
-    });
-
-    if (filtered.length === beforeLen) {
-      throw new HttpsError("failed-precondition", "FAILED_PRECONDITION: NOT_IN_MATCH");
+    if (!freshMatchSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        "MATCH_NOT_FOUND"
+      );
     }
+
+    const matchData =
+      freshMatchSnap.data() || {};
+
+    const current =
+      Array.isArray(matchData.participants)
+        ? matchData.participants.slice()
+        : [];
+
+    const createdByType =
+      asString(
+        matchData.createdByType
+        || "player"
+      );
+
+    const clubId =
+      asString(matchData.clubId);
+
+    const isClubMatch =
+      createdByType === "club"
+      && clubId.length > 0;
+
+    let clubRef = null;
+    let clubSnap = null;
+    let relationRef = null;
+    let relationSnap = null;
+
+    // Toutes les lectures avant les écritures.
+    if (isClubMatch) {
+      clubRef =
+        db.collection("clubs").doc(clubId);
+
+      relationRef =
+        clubRef.collection("players").doc(uid);
+
+      clubSnap =
+        await tx.get(clubRef);
+
+      relationSnap =
+        await tx.get(relationRef);
+
+      if (!clubSnap.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "CLUB_NOT_FOUND"
+        );
+      }
+    }
+
+    // --------------------------------------------------
+    // VALIDATION DE PRÉSENCE
+    // --------------------------------------------------
+
+    const friendPrefix =
+      friendMarkerPrefix(uid);
+
+    const wasParticipant =
+      current.some(
+        (participant) =>
+          participant === uid
+          || (
+            typeof participant === "string"
+            && participant.startsWith(friendPrefix)
+          )
+      );
+
+    if (!wasParticipant) {
+      throw new HttpsError(
+        "failed-precondition",
+        "FAILED_PRECONDITION: NOT_IN_MATCH"
+      );
+    }
+
+    const filtered =
+      current.filter((participant) => {
+        if (participant === uid) {
+          return false;
+        }
+
+        if (
+          typeof participant === "string"
+          && participant.startsWith(friendPrefix)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+
+    // --------------------------------------------------
+    // ÉCRITURE OPÉRATIONNELLE
+    // --------------------------------------------------
 
     tx.update(matchRef, {
       participants: filtered,
-      updatedAt: FieldValue.serverTimestamp(),
+      updatedAt:
+        FieldValue.serverTimestamp(),
     });
+
+    // --------------------------------------------------
+    // HISTORIQUE + CRM + EVENT CLUB
+    // --------------------------------------------------
+
+    if (isClubMatch) {
+      updateClubMatchPlayerStatus(
+        tx,
+        {
+          matchRef,
+          playerUid: uid,
+          status: "left",
+        }
+      );
+
+      const relationPatch = {
+        playerUid: uid,
+
+        lastSeenAt:
+          FieldValue.serverTimestamp(),
+
+        lastMatchId:
+          matchId,
+
+        lastInteractionType:
+          "match_leave",
+
+        status:
+          "inactive",
+
+        matchesLeftCount:
+          FieldValue.increment(1),
+
+        updatedAt:
+          FieldValue.serverTimestamp(),
+      };
+
+      if (!relationSnap.exists) {
+        relationPatch.firstSeenAt =
+          FieldValue.serverTimestamp();
+
+        relationPatch.createdAt =
+          FieldValue.serverTimestamp();
+      }
+
+      tx.set(
+        relationRef,
+        relationPatch,
+        { merge: true }
+      );
+
+      appendClubEvent(
+        tx,
+        {
+          eventType:
+            "PLAYER_LEFT_MATCH",
+
+          clubId,
+          playerUid: uid,
+          matchId,
+
+          payload: {
+            source: "leave_match",
+            removedFriend:
+              current.some(
+                (participant) =>
+                  typeof participant === "string"
+                  && participant.startsWith(
+                    friendPrefix
+                  )
+              ),
+          },
+        }
+      );
+
+      resultClubId = clubId;
+      resultIsClubMatch = true;
+    }
   });
 
-  logger.info("leaveMatch ok", { matchId, uid });
-  return { ok: true, matchId };
+  logger.info(
+    "leaveMatch ok",
+    {
+      matchId,
+      uid,
+      isClubMatch:
+        resultIsClubMatch,
+      clubId:
+        resultClubId || null,
+    }
+  );
+
+  return {
+    ok: true,
+    matchId,
+    isClubMatch:
+      resultIsClubMatch,
+  };
 });
+
 // ======================================================
 // CALLABLE — deleteMatch
 // ======================================================
