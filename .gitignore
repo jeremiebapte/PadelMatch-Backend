@@ -69,3 +69,8 @@ node_modules/
 .dataconnect
 firebase-service-account.json
 .DS_Store
+
+# Local development backups
+backups/
+*.before_fix
+*.before_player_notification
