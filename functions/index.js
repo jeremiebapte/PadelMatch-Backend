@@ -2471,6 +2471,387 @@ export const cancelClubReservation = onCall(
 );
 
 // ======================================================
+// CALLABLE — getClubMatchDetail
+// - Lecture privée d'un match Club et de ses contacts joueurs
+// - Accessible uniquement à l'admin du Club propriétaire
+// ======================================================
+export const getClubMatchDetail = onCall(
+  RUNTIME,
+  async (req) => {
+    const uid = assertAuth(req);
+
+    const matchId =
+      asString(req.data?.matchId);
+
+    if (!matchId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: matchId missing"
+      );
+    }
+
+    const matchRef =
+      db.collection("matches").doc(matchId);
+
+    const matchSnap =
+      await matchRef.get();
+
+    if (!matchSnap.exists) {
+      throw new HttpsError(
+        "not-found",
+        "MATCH_NOT_FOUND"
+      );
+    }
+
+    const matchData =
+      matchSnap.data() || {};
+
+    const createdByType =
+      asString(
+        matchData.createdByType
+        || "player"
+      );
+
+    const clubId =
+      asString(matchData.clubId);
+
+    if (
+      createdByType !== "club"
+      || !clubId
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "NOT_CLUB_MATCH"
+      );
+    }
+
+    const clubRef =
+      db.collection("clubs").doc(clubId);
+
+    const clubSnap =
+      await clubRef.get();
+
+    if (!clubSnap.exists) {
+      throw new HttpsError(
+        "failed-precondition",
+        "CLUB_NOT_FOUND"
+      );
+    }
+
+    const clubData =
+      clubSnap.data() || {};
+
+    const adminUid =
+      asString(clubData.adminUid);
+
+    if (adminUid !== uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "NOT_CLUB_OWNER"
+      );
+    }
+
+    const contactsSnap =
+      await matchRef
+        .collection("playerContacts")
+        .get();
+
+    const toMillisOrNull = (value) => {
+      if (!value) return null;
+
+      if (
+        typeof value.toMillis === "function"
+      ) {
+        return value.toMillis();
+      }
+
+      const normalized =
+        normalizeDateMs(value);
+
+      return normalized || null;
+    };
+
+    const contacts =
+      contactsSnap.docs
+        .map((doc) => {
+          const data =
+            doc.data() || {};
+
+          const status =
+            asString(data.status)
+            || "active";
+
+          return {
+            id: doc.id,
+
+            playerUid:
+              asString(data.playerUid)
+              || doc.id,
+
+            playerName:
+              asString(data.playerName)
+              || "Joueur",
+
+            playerPhone:
+              asString(data.playerPhone),
+
+            joinedWithFriend:
+              data.joinedWithFriend === true,
+
+            friendName:
+              asString(data.friendName),
+
+            status,
+
+            joinedAt:
+              toMillisOrNull(
+                data.joinedAt
+              ),
+
+            leftAt:
+              toMillisOrNull(
+                data.leftAt
+              ),
+
+            updatedAt:
+              toMillisOrNull(
+                data.updatedAt
+              ),
+
+            consentVersion:
+              Number.isFinite(
+                Number(data.consentVersion)
+              )
+                ? Number(data.consentVersion)
+                : 1,
+
+            consentGivenAt:
+              toMillisOrNull(
+                data.consentGivenAt
+              ),
+
+            platform:
+              asString(data.platform),
+
+            appVersion:
+              asString(data.appVersion),
+          };
+        })
+        .sort((left, right) => {
+          const statusRank = (status) => {
+            if (status === "active") return 0;
+            if (status === "left") return 1;
+            return 2;
+          };
+
+          const byStatus =
+            statusRank(left.status)
+            - statusRank(right.status);
+
+          if (byStatus !== 0) {
+            return byStatus;
+          }
+
+          return (
+            Number(left.joinedAt || 0)
+            - Number(right.joinedAt || 0)
+          );
+        });
+
+    const match = {
+      id: matchId,
+
+      clubId,
+      clubName:
+        asString(
+          matchData.clubName
+          || clubData.name
+        ),
+
+      clubLogoUrl:
+        asString(
+          matchData.clubLogoUrl
+          || clubData.logoUrl
+        ),
+
+      clubVerified:
+        matchData.clubVerified === true,
+
+      createdByType,
+      createdById:
+        asString(matchData.createdById),
+
+      createurUid:
+        asString(
+          matchData.createurUid
+          || matchData.creatorUid
+        ),
+
+      placeId:
+        asString(matchData.placeId),
+
+      placeName:
+        asString(
+          matchData.placeName
+          || matchData.lieu
+          || "Terrain"
+        ),
+
+      lieu:
+        asString(
+          matchData.lieu
+          || matchData.placeName
+          || "Terrain"
+        ),
+
+      description:
+        asString(matchData.description),
+
+      dateHeure:
+        normalizeDateMs(
+          matchData.dateHeure
+        ),
+
+      durationMinutes:
+        Number.isFinite(
+          Number(matchData.durationMinutes)
+        )
+          ? Number(matchData.durationMinutes)
+          : null,
+
+      niveau:
+        Number.isFinite(
+          Number(
+            matchData.niveau
+            ?? matchData.level
+          )
+        )
+          ? Number(
+              matchData.niveau
+              ?? matchData.level
+            )
+          : null,
+
+      level:
+        Number.isFinite(
+          Number(
+            matchData.level
+            ?? matchData.niveau
+          )
+        )
+          ? Number(
+              matchData.level
+              ?? matchData.niveau
+            )
+          : null,
+
+      participants:
+        Array.isArray(
+          matchData.participants
+        )
+          ? matchData.participants
+              .filter(
+                (value) =>
+                  typeof value === "string"
+              )
+          : [],
+
+      latitude:
+        asNumber(
+          matchData.latitude
+          ?? matchData.lat
+        ),
+
+      longitude:
+        asNumber(
+          matchData.longitude
+          ?? matchData.lng
+        ),
+
+      createdAt:
+        toMillisOrNull(
+          matchData.createdAt
+        ),
+
+      updatedAt:
+        toMillisOrNull(
+          matchData.updatedAt
+        ),
+    };
+
+    const activeContacts =
+      contacts.filter(
+        (contact) =>
+          contact.status === "active"
+      );
+
+    const leftContacts =
+      contacts.filter(
+        (contact) =>
+          contact.status === "left"
+      );
+
+    logger.info(
+      "getClubMatchDetail ok",
+      {
+        matchId,
+        clubId,
+        uid,
+        contactsCount:
+          contacts.length,
+        activeCount:
+          activeContacts.length,
+        leftCount:
+          leftContacts.length,
+      }
+    );
+
+    return {
+      ok: true,
+
+      match,
+
+      contacts,
+
+      activeContacts,
+
+      leftContacts,
+
+      summary: {
+        totalContacts:
+          contacts.length,
+
+        activeContacts:
+          activeContacts.length,
+
+        leftContacts:
+          leftContacts.length,
+
+        participantSlots:
+          Array.isArray(
+            match.participants
+          )
+            ? match.participants.length
+            : 0,
+
+        remainingSlots:
+          Math.max(
+            0,
+            4
+            - (
+              Array.isArray(
+                match.participants
+              )
+                ? match.participants.length
+                : 0
+            )
+          ),
+      },
+    };
+  }
+);
+
+// ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
 // - Compat: Android joinWithFriend / iOS withFriend
 // - Match Club: téléphone consenti + contact privé + CRM + event
