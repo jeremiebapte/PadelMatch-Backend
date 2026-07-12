@@ -13,7 +13,10 @@
       {
         "source": "**/*",
         "headers": [
-          { "key": "Cache-Control", "value": "no-cache" }
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
         ]
       }
     ],
@@ -40,9 +43,20 @@
       }
     ],
     "rewrites": [
-      { "source": "/terms",   "destination": "/terms.html" },
-      { "source": "/privacy", "destination": "/privacy.html" }
+      {
+        "source": "/terms",
+        "destination": "/terms.html"
+      },
+      {
+        "source": "/privacy",
+        "destination": "/privacy.html"
+      }
     ]
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
   }
 }
-

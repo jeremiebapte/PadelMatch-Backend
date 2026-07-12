@@ -126,6 +126,36 @@ function isValidFriendName(name) {
   return t.length >= 1 && t.length <= 24;
 }
 
+function normalizeFrenchPhone(value) {
+  const raw = asString(value);
+
+  if (!raw) return null;
+
+  let digits = raw.replace(/[^0-9+]/g, "");
+
+  if (digits.startsWith("0033")) {
+    digits = `+33${digits.slice(4)}`;
+  }
+
+  if (digits.startsWith("+33")) {
+    const national = digits.slice(3);
+
+    // +33 suivi de 9 chiffres, sans le zéro national.
+    if (!/^[1-9][0-9]{8}$/.test(national)) {
+      return null;
+    }
+
+    return `+33${national}`;
+  }
+
+  // Format national français : 0 suivi de 9 chiffres.
+  if (/^0[1-9][0-9]{8}$/.test(digits)) {
+    return `+33${digits.slice(1)}`;
+  }
+
+  return null;
+}
+
 function frTime(ms) {
   return new Intl.DateTimeFormat("fr-FR", {
     timeZone: "Europe/Paris",
@@ -250,6 +280,29 @@ function copyFor(type, subtype, ctx = {}) {
     };
   }
 
+if (type === "club_availability" && subtype === "new") {
+  return {
+    title: "🎾 Terrain disponible près de toi",
+    body: heure
+      ? `${lieu} • ${heure}`
+      : `${lieu}`,
+  };
+}
+
+if (type === "club_availability" && subtype === "join") {
+  return {
+    title: "Nouveau joueur inscrit 🎾",
+    body: `${pseudo} a rejoint ${lieu}.`,
+  };
+}
+
+if (type === "club_availability" && subtype === "full") {
+  return {
+    title: "Terrain complet 🎉",
+    body: `${lieu} est désormais complet.`,
+  };
+}
+
   if (type === "chat" && subtype === "message") {
     return {
       title: "Nouveau message",
@@ -336,6 +389,44 @@ async function sendChatHybrid(tokens, { title, body, data }) {
 }
 
 /**
+ * Envoi visible hybride :
+ * - Android : data-only, traité par MyFirebaseMessagingService
+ * - iOS : notification APNS visible
+ * - title/body inclus dans data pour Android
+ */
+async function sendVisibleHybrid(tokens, { title, body, data }) {
+  if (!Array.isArray(tokens) || !tokens.length) return;
+
+  const safeData = Object.fromEntries(
+    Object.entries({
+      ...(data || {}),
+      title,
+      body,
+    }).map(([k, v]) => [k, String(v)])
+  );
+
+  try {
+    const res = await messaging.sendEachForMulticast({
+      tokens,
+      android: {
+        priority: "high",
+      },
+      apns: apnsPayload(title, body),
+      data: safeData,
+    });
+
+    if (res.failureCount) {
+      logger.warn("sendVisibleHybrid multicast failures", {
+        failureCount: res.failureCount,
+        successCount: res.successCount,
+      });
+    }
+  } catch (e) {
+    logger.error("sendVisibleHybrid multicast error", e);
+  }
+}
+
+/**
  * Envoi classique visible (match/new/join/leave/reminders)
  */
 async function send(tokens, { title, body, data }) {
@@ -386,31 +477,120 @@ async function hasTimeOverlap(uid, targetMs) {
   const end = targetMs + 2 * HOUR_MS;
   const friendPrefix = friendMarkerPrefix(uid);
 
-  const [createdSnap, joinedSnap, windowSnap] = await Promise.all([
+  const [
+    createdSnap,
+    joinedSnap,
+    matchWindowSnap,
+    availabilityJoinedSnap,
+    availabilityWindowSnap,
+  ] = await Promise.all([
     db.collection("matches")
       .where("createurUid", "==", uid)
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(1)
       .get(),
+
     db.collection("matches")
       .where("participants", "array-contains", uid)
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(1)
       .get(),
+
     db.collection("matches")
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(50)
+      .get(),
+
+    db.collection("clubAvailabilities")
+      .where("participants", "array-contains", uid)
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(1)
+      .get(),
+
+    db.collection("clubAvailabilities")
       .where("dateHeure", ">=", start)
       .where("dateHeure", "<=", end)
       .limit(50)
       .get(),
   ]);
 
-  if (!createdSnap.empty || !joinedSnap.empty) return true;
+  if (!createdSnap.empty || !joinedSnap.empty || !availabilityJoinedSnap.empty) {
+    return true;
+  }
+
+  for (const doc of matchWindowSnap.docs) {
+    const data = doc.data() || {};
+    const parts = Array.isArray(data.participants) ? data.participants : [];
+    if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
+      return true;
+    }
+  }
+
+  for (const doc of availabilityWindowSnap.docs) {
+    const data = doc.data() || {};
+    const parts = Array.isArray(data.participants) ? data.participants : [];
+    if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
+async function hasReservationOverlap(uid, targetMs) {
+  const start = targetMs - 2 * HOUR_MS;
+  const end = targetMs + 2 * HOUR_MS;
+
+  const snap = await db.collection("clubReservations")
+    .where("playerUid", "==", uid)
+    .where("status", "in", ["pending", "confirmed"])
+    .limit(50)
+    .get();
+
+  for (const doc of snap.docs) {
+    const data = doc.data() || {};
+    const ms = normalizeDateMs(data.dateHeure);
+
+    if (ms >= start && ms <= end) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+async function hasClubAvailabilityOverlap(uid, targetMs) {
+  const start = targetMs - 2 * HOUR_MS;
+  const end = targetMs + 2 * HOUR_MS;
+  const friendPrefix = friendMarkerPrefix(uid);
+
+  const [joinedSnap, windowSnap] = await Promise.all([
+    db.collection("clubAvailabilities")
+      .where("participants", "array-contains", uid)
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(1)
+      .get(),
+
+    db.collection("clubAvailabilities")
+      .where("dateHeure", ">=", start)
+      .where("dateHeure", "<=", end)
+      .limit(50)
+      .get(),
+  ]);
+
+  if (!joinedSnap.empty) return true;
 
   for (const doc of windowSnap.docs) {
     const data = doc.data() || {};
     const parts = Array.isArray(data.participants) ? data.participants : [];
+
     if (parts.some((p) => typeof p === "string" && p.startsWith(friendPrefix))) {
       return true;
     }
@@ -536,6 +716,246 @@ async function findEligibleRecipients(matchData, opts = {}) {
 }
 
 // ======================================================
+// CLUB AVAILABILITY / USER TARGETING HELPERS
+// ======================================================
+function isClubAccount(userData) {
+  const role = asString(userData?.role);
+
+  return role === "club_admin"
+    || role === "club"
+    || asString(userData?.clubId).length > 0;
+}
+
+function isUserEligibleForClubAvailability(
+  userData,
+  uid,
+  availabilityData,
+  availabilityCoords,
+  opts = {}
+) {
+  if (userData?.notificationsEnabled !== true) return false;
+
+  // Aucun compte Club ne reçoit les notifications joueur.
+  if (isClubAccount(userData)) return false;
+
+  const createdByUid = asString(availabilityData?.createdByUid);
+  if (createdByUid && createdByUid === uid) return false;
+
+  if (
+    typeof userData?.notifLat !== "number"
+    || typeof userData?.notifLng !== "number"
+    || typeof userData?.notifRadiusKm !== "number"
+  ) {
+    return false;
+  }
+
+  if (!availabilityCoords) return false;
+
+  const userCoords = {
+    lat: userData.notifLat,
+    lng: userData.notifLng,
+  };
+
+  if (
+    distanceKmApprox(userCoords, availabilityCoords)
+    > userData.notifRadiusKm
+  ) {
+    return false;
+  }
+
+  const status = asString(availabilityData?.status || "open");
+  if (status !== "open" && status !== "available") return false;
+
+  if (
+    availabilityData?.joinPlayers !== true
+    && availabilityData?.reserveFullCourt !== true
+  ) {
+    return false;
+  }
+
+  const participants = Array.isArray(availabilityData?.participants)
+    ? availabilityData.participants
+    : [];
+
+  if (
+    participants.some((participant) =>
+      participant === uid
+      || (
+        typeof participant === "string"
+        && participant.startsWith(`ami_de_${uid}:`)
+      )
+    )
+  ) {
+    return false;
+  }
+
+  if (participants.length >= MAX_PLAYERS) return false;
+
+  const availabilityMs = toMillis(availabilityData?.dateHeure);
+  if (!availabilityMs) return false;
+
+  const now = Date.now();
+  if (availabilityMs <= now) return false;
+
+  if (typeof opts.maxHoursAhead === "number") {
+    const maxMs = now + opts.maxHoursAhead * HOUR_MS;
+    if (availabilityMs > maxMs) return false;
+  }
+
+  return true;
+}
+
+async function findEligibleRecipientsForClubAvailability(
+  availabilityData,
+  availabilityCoords,
+  opts = {}
+) {
+  const usersSnap = await db.collection("users")
+    .where("notificationsEnabled", "==", true)
+    .get();
+
+  if (usersSnap.empty) return [];
+
+  const recipients = [];
+
+  for (const userDoc of usersSnap.docs) {
+    const uid = userDoc.id;
+    const userData = userDoc.data() || {};
+
+    if (
+      isUserEligibleForClubAvailability(
+        userData,
+        uid,
+        availabilityData,
+        availabilityCoords,
+        opts
+      )
+    ) {
+      recipients.push(uid);
+    }
+  }
+
+  return recipients;
+}
+
+// ======================================================
+// INTERNAL — push nearby notifications for a Club availability
+// ======================================================
+async function pushNearbyForClubAvailabilityId(availabilityId) {
+  const availabilitySnap = await db.collection("clubAvailabilities")
+    .doc(availabilityId)
+    .get();
+
+  if (!availabilitySnap.exists) {
+    logger.warn("pushNearbyForClubAvailabilityId: availability missing", {
+      availabilityId,
+    });
+    return;
+  }
+
+  const availability = availabilitySnap.data() || {};
+
+  const status = asString(availability.status || "open");
+  if (status !== "open" && status !== "available") return;
+
+  const dateHeure = toMillis(availability.dateHeure);
+  if (!dateHeure || dateHeure <= Date.now()) return;
+
+  if (
+    availability.joinPlayers !== true
+    && availability.reserveFullCourt !== true
+  ) {
+    return;
+  }
+
+  const clubId = asString(availability.clubId);
+  if (!clubId) return;
+
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+  if (!clubSnap.exists) {
+    logger.warn("pushNearbyForClubAvailabilityId: club missing", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const club = clubSnap.data() || {};
+
+  const lat = asNumber(club.latitude) ?? asNumber(club.lat);
+  const lng = asNumber(club.longitude) ?? asNumber(club.lng);
+
+  if (lat === null || lng === null) {
+    logger.warn("pushNearbyForClubAvailabilityId: club coords missing", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const availabilityCoords = { lat, lng };
+
+  const recipientUids =
+    await findEligibleRecipientsForClubAvailability(
+      availability,
+      availabilityCoords,
+      { maxHoursAhead: 24 }
+    );
+
+  if (!recipientUids.length) {
+    logger.info("pushNearbyForClubAvailabilityId: no eligible recipient", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const clubName =
+    asString(availability.clubName)
+    || asString(club.name)
+    || "Un club";
+
+  const courtLabel =
+    asString(availability.courtLabel)
+    || "un terrain";
+
+  const lieu = `${clubName} — ${courtLabel}`;
+  const heure = frTime(dateHeure);
+
+  let sentUsers = 0;
+
+  for (const uid of recipientUids) {
+    const tokens = await tokensOf(uid);
+    if (!tokens.length) continue;
+
+    const copy = copyFor("club_availability", "new", {
+      lieu,
+      heure,
+    });
+
+    await sendVisibleHybrid(tokens, {
+      title: copy.title,
+      body: copy.body,
+      data: {
+        type: "club_availability",
+        subtype: "new",
+        availabilityId,
+        clubId,
+      },
+    });
+
+    sentUsers += 1;
+  }
+
+  logger.info("pushNearbyForClubAvailabilityId complete", {
+    availabilityId,
+    clubId,
+    eligibleUsers: recipientUids.length,
+    sentUsers,
+  });
+}
+
+// ======================================================
 // INTERNAL — push nearby notifications for a given matchId
 // ======================================================
 async function pushNearbyForMatchId(matchId) {
@@ -572,8 +992,18 @@ async function pushNearbyForMatchId(matchId) {
 export const createMatch = onCall(RUNTIME, async (req) => {
   try {
     const uid = assertAuth(req);
-
     const data = req.data ?? {};
+
+    const createdByType = data?.createdByType === "club" ? "club" : "player";
+    const createdById =
+      typeof data?.createdById === "string" && data.createdById.length > 0
+        ? data.createdById
+        : uid;
+
+    const clubId =
+      typeof data?.clubId === "string" && data.clubId.length > 0
+        ? data.clubId
+        : null;
 
     const placeId = asString(data?.placeId);
     const lieu = asString(data?.lieu || data?.placeName || "Club");
@@ -600,39 +1030,60 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
     }
 
+    if (createdByType === "club" && !clubId) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubId missing");
+    }
+
     const jm = joueursManquants === 1 || joueursManquants === 2 ? joueursManquants : null;
     if (jm === null) {
       throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: joueursManquants must be 1 or 2");
     }
 
-    let overlap = false;
-    try {
-      overlap = await hasTimeOverlap(uid, dateHeure);
-    } catch (e) {
-      logger.error("createMatch hasTimeOverlap crash", {
-        uid,
-        dateHeure,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
-    }
-    if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+    if (createdByType === "player") {
+      let overlap = false;
+      try {
+        overlap = await hasTimeOverlap(uid, dateHeure);
+      } catch (e) {
+        logger.error("createMatch hasTimeOverlap crash", {
+          uid,
+          dateHeure,
+          err: String(e?.message ?? e),
+        });
+        throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
+      }
+      if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+	let reservationOverlap = false;
+try {
+  reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+} catch (e) {
+  logger.error("createMatch hasReservationOverlap crash", {
+    uid,
+    dateHeure,
+    err: String(e?.message ?? e),
+  });
+  throw new HttpsError("internal", "RESERVATION_OVERLAP_INTERNAL");
+}
 
-    let placeConflict = false;
-    try {
-      placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
-    } catch (e) {
-      logger.error("createMatch hasPlaceConflictKm1 crash", {
-        uid,
-        placeId,
-        lat,
-        lng,
-        dateHeure,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
+
+      let placeConflict = false;
+      try {
+        placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
+      } catch (e) {
+        logger.error("createMatch hasPlaceConflictKm1 crash", {
+          uid,
+          placeId,
+          lat,
+          lng,
+          dateHeure,
+          err: String(e?.message ?? e),
+        });
+        throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
+      }
+      if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
     }
-    if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
 
     const participants = [uid];
     if (jm === 1) {
@@ -668,6 +1119,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       niveau,
       level: niveau,
       createurUid: uid,
+      createdByType,
+      createdById,
+      ...(clubId ? { clubId } : {}),
       participants,
       ...(createurPseudo ? { createurPseudo } : {}),
       ...(createurAvatar ? { createurAvatar } : {}),
@@ -685,6 +1139,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     } catch (e) {
       logger.error("createMatch Firestore add failed", {
         uid,
+        createdByType,
+        createdById,
+        clubId,
         placeId,
         dateHeure,
         niveau,
@@ -696,6 +1153,9 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     logger.info("createMatch ok", {
       matchId: ref.id,
       uid,
+      createdByType,
+      createdById,
+      clubId,
       placeId,
       dateHeure,
       niveau,
@@ -714,6 +1174,1059 @@ export const createMatch = onCall(RUNTIME, async (req) => {
     throw new HttpsError("internal", "CREATE_MATCH_INTERNAL");
   }
 });
+// ======================================================
+// CALLABLE — createClubAvailability
+// ======================================================
+export const createClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const data = req.data ?? {};
+
+  const clubId = asString(data.clubId);
+  const clubName = asString(data.clubName);
+  const courtLabel = asString(data.courtLabel).trim();
+  const dateHeure = normalizeDateMs(data.dateHeure);
+  const durationMinutes = Number(data.durationMinutes || 90);
+  const price = data.price === null || data.price === undefined || data.price === ""
+    ? null
+    : Number(data.price);
+
+  const descriptionRaw = asString(data.description);
+  const description = descriptionRaw ? descriptionRaw.trim() : "";
+
+  const joinPlayers = data.joinPlayers === true;
+  const reserveFullCourt = data.reserveFullCourt === true;
+
+  if (!clubId) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubId missing");
+  if (!clubName) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubName missing");
+  if (!courtLabel) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: courtLabel missing");
+  if (!dateHeure) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: dateHeure missing");
+  if (dateHeure <= Date.now()) throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+
+  if (!(Number.isFinite(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: durationMinutes invalid");
+  }
+
+  if (price !== null && !(Number.isFinite(price) && price >= 0 && price <= 500)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: price invalid");
+  }
+
+  if (!joinPlayers && !reserveFullCourt) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: at least one action required");
+  }
+
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+  if (!clubSnap.exists) {
+    throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+  }
+
+  const club = clubSnap.data() || {};
+  if (asString(club.adminUid) !== uid) {
+    throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+  }
+
+  const doc = {
+    clubId,
+    clubName,
+    courtLabel,
+    dateHeure,
+    durationMinutes,
+    ...(price !== null ? { price } : {}),
+    ...(description ? { description } : {}),
+    joinPlayers,
+    reserveFullCourt,
+    participants: [],
+    status: "open",
+    createdByUid: uid,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  const ref = await db.collection("clubAvailabilities").add(doc);
+
+  logger.info("createClubAvailability ok", {
+    availabilityId: ref.id,
+    clubId,
+    uid,
+    courtLabel,
+    dateHeure,
+    joinPlayers,
+    reserveFullCourt,
+  });
+
+  return { ok: true, availabilityId: ref.id };
+});
+
+// ======================================================
+// CALLABLE — joinClubAvailability
+// ======================================================
+export const joinClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  const withFriend = req.data?.withFriend === true;
+  const friendNameRaw = asString(req.data?.friendName);
+  const friendName = friendNameRaw.trim() || "Joueur";
+
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  if (withFriend && !isValidFriendName(friendName)) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: friendName invalid");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+let notifyPayload = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const status = asString(data.status || "open");
+    const joinPlayers = data.joinPlayers === true;
+    const dateHeure = normalizeDateMs(data.dateHeure);
+
+    if (status !== "open") {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
+    }
+
+    if (!joinPlayers) {
+      throw new HttpsError("failed-precondition", "JOIN_PLAYERS_DISABLED");
+    }
+
+    if (!dateHeure || dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+    }
+
+	const matchOverlap = await hasTimeOverlap(uid, dateHeure);
+	if (matchOverlap) {
+	  throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+}
+
+const reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
+
+
+
+    const current = Array.isArray(data.participants) ? data.participants.slice() : [];
+
+    const already =
+      current.includes(uid) ||
+      current.some((p) => typeof p === "string" && p.startsWith(friendMarkerPrefix(uid)));
+
+    if (already) {
+      throw new HttpsError("already-exists", "ALREADY_JOINED");
+    }
+
+    const needed = withFriend ? 2 : 1;
+
+    if (current.length + needed > 4) {
+      throw new HttpsError("failed-precondition", withFriend ? "NEED_TWO_SLOTS" : "NEED_ONE_SLOT");
+    }
+
+    current.push(uid);
+
+    if (withFriend) {
+      current.push(`${friendMarkerPrefix(uid)}${friendName}`);
+    }
+
+    const patch = {
+      participants: current,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (current.length >= 4) {
+      patch.status = "full";
+      patch.completedAt = FieldValue.serverTimestamp();
+    }
+
+notifyPayload = {
+  clubId: asString(data.clubId),
+  courtLabel: asString(data.courtLabel || "votre terrain"),
+  becameFull: current.length >= 4,
+};
+
+    tx.update(ref, patch);
+  });
+
+if (notifyPayload?.clubId) {
+  try {
+    const clubSnap = await db.collection("clubs").doc(notifyPayload.clubId).get();
+    const adminUid = asString(clubSnap.get("adminUid"));
+
+    if (adminUid) {
+      const [tokens, pseudo] = await Promise.all([
+        tokensOf(adminUid),
+        pseudoOf(uid),
+      ]);
+
+        if (tokens.length) {
+          if (notifyPayload.becameFull) {
+            const fullCopy = copyFor("club_availability", "full", {
+              lieu: notifyPayload.courtLabel,
+            });
+
+            await send(tokens, {
+              title: fullCopy.title,
+              body: fullCopy.body,
+              data: {
+                type: "club_availability",
+                subtype: "full",
+                availabilityId,
+              },
+            });
+          } else {
+            const joinCopy = copyFor("club_availability", "join", {
+              pseudo,
+              lieu: notifyPayload.courtLabel,
+            });
+
+            await send(tokens, {
+              title: joinCopy.title,
+              body: joinCopy.body,
+              data: {
+                type: "club_availability",
+                subtype: "join",
+                availabilityId,
+              },
+            });
+          }
+        }
+    }
+  } catch (e) {
+    logger.warn("joinClubAvailability notification failed", {
+      availabilityId,
+      uid,
+      err: String(e?.message ?? e),
+    });
+  }
+}
+
+  logger.info("joinClubAvailability ok", {
+    availabilityId,
+    uid,
+    withFriend,
+  });
+
+  return { ok: true, availabilityId };
+});
+
+// ======================================================
+// CALLABLE — leaveClubAvailability
+// ======================================================
+export const leaveClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+  let notifyPayload = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const current = Array.isArray(data.participants) ? data.participants : [];
+    const friendPrefix = friendMarkerPrefix(uid);
+
+    const wasIn = current.some((p) =>
+      p === uid || (typeof p === "string" && p.startsWith(friendPrefix))
+    );
+
+    if (!wasIn) {
+      throw new HttpsError("failed-precondition", "NOT_IN_AVAILABILITY");
+    }
+
+    const nextParticipants = current.filter((p) =>
+      p !== uid && !(typeof p === "string" && p.startsWith(friendPrefix))
+    );
+
+    const patch = {
+      participants: nextParticipants,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    if (asString(data.status) === "full" && nextParticipants.length < 4) {
+      patch.status = "open";
+      patch.reopenedAt = FieldValue.serverTimestamp();
+    }
+
+    notifyPayload = {
+      clubId: asString(data.clubId),
+      courtLabel: asString(data.courtLabel || "votre terrain"),
+    };
+
+    tx.update(ref, patch);
+  });
+
+  if (notifyPayload?.clubId) {
+    try {
+      const clubSnap = await db.collection("clubs").doc(notifyPayload.clubId).get();
+      const adminUid = asString(clubSnap.get("adminUid"));
+
+      if (adminUid) {
+        const [tokens, pseudo] = await Promise.all([
+          tokensOf(adminUid),
+          pseudoOf(uid),
+        ]);
+
+        if (tokens.length) {
+          await send(tokens, {
+            title: "Désistement joueur",
+            body: `${pseudo} s’est désisté de ${notifyPayload.courtLabel}.`,
+            data: {
+              type: "club_availability",
+              subtype: "leave",
+              availabilityId,
+            },
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn("leaveClubAvailability notification failed", {
+        availabilityId,
+        uid,
+        err: String(e?.message ?? e),
+      });
+    }
+  }
+
+  logger.info("leaveClubAvailability ok", {
+    availabilityId,
+    uid,
+  });
+
+  return { ok: true, availabilityId };
+});
+
+// ======================================================
+// CALLABLE — closeClubAvailability
+// ======================================================
+export const closeClubAvailability = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  const ref = db.collection("clubAvailabilities").doc(availabilityId);
+
+  let notifyPayload = null;
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+    }
+
+    const data = snap.data() || {};
+    const clubId = asString(data.clubId);
+
+    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    const participants = Array.isArray(data.participants) ? data.participants : [];
+
+    notifyPayload = {
+      courtLabel: asString(data.courtLabel || "votre terrain"),
+      participantUids: cleanUids(participants),
+    };
+
+    tx.update(ref, {
+      status: "closed",
+      closedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  if (notifyPayload?.participantUids?.length) {
+    try {
+      const tokenMap = await getTokens(notifyPayload.participantUids);
+      const tokens = Array.from(tokenMap.values()).flat();
+
+      await send(tokens, {
+        title: "Créneau indisponible",
+        body: `${notifyPayload.courtLabel} n’est plus disponible.`,
+        data: {
+          type: "club_availability",
+          subtype: "closed",
+          availabilityId,
+        },
+      });
+    } catch (e) {
+      logger.warn("closeClubAvailability notification failed", {
+        availabilityId,
+        err: String(e?.message ?? e),
+      });
+    }
+  }
+
+  logger.info("closeClubAvailability ok", {
+    availabilityId,
+    uid,
+  });
+
+  return { ok: true, availabilityId };
+});
+// ======================================================
+// CALLABLE — requestClubReservation
+// ======================================================
+export const requestClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const availabilityId = asString(req.data?.availabilityId);
+  const phone = normalizeFrenchPhone(req.data?.phone);
+
+  if (!availabilityId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
+  }
+
+  if (!phone) {
+    throw new HttpsError("invalid-argument", "INVALID_PHONE");
+  }
+
+  const availabilityRef = db.collection("clubAvailabilities").doc(availabilityId);
+  const availabilitySnap = await availabilityRef.get();
+
+  if (!availabilitySnap.exists) {
+    throw new HttpsError("not-found", "AVAILABILITY_NOT_FOUND");
+  }
+
+  const availability = availabilitySnap.data() || {};
+  const dateHeure = normalizeDateMs(availability.dateHeure);
+
+  if (availability.status !== "open") {
+    throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
+  }
+
+  if (availability.reserveFullCourt !== true) {
+    throw new HttpsError("failed-precondition", "FULL_COURT_DISABLED");
+  }
+
+  if (!dateHeure || dateHeure <= Date.now()) {
+    throw new HttpsError("failed-precondition", "AVAILABILITY_PAST");
+  }
+
+  const overlap = await hasTimeOverlap(uid, dateHeure);
+  if (overlap) {
+    throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+  }
+
+const reservationOverlap = await hasReservationOverlap(uid, dateHeure);
+if (reservationOverlap) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
+
+  const existingForPlayerSnap = await db.collection("clubReservations")
+    .where("availabilityId", "==", availabilityId)
+    .where("playerUid", "==", uid)
+    .where("status", "in", ["pending", "confirmed"])
+    .limit(1)
+    .get();
+
+  if (!existingForPlayerSnap.empty) {
+    throw new HttpsError("already-exists", "RESERVATION_ALREADY_EXISTS");
+  }
+
+  const alreadyConfirmedSnap = await db.collection("clubReservations")
+    .where("availabilityId", "==", availabilityId)
+    .where("status", "==", "confirmed")
+    .limit(1)
+    .get();
+
+  if (!alreadyConfirmedSnap.empty) {
+    throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
+  }
+
+  const userSnap = await db.collection("users").doc(uid).get();
+
+  if (!userSnap.exists) {
+    throw new HttpsError("not-found", "USER_NOT_FOUND");
+  }
+
+  const user = userSnap.data() || {};
+
+  const reservation = {
+    availabilityId,
+
+    clubId: asString(availability.clubId),
+    clubName: asString(availability.clubName),
+
+    playerUid: uid,
+    playerName: asString(user.pseudo || user.username || ""),
+    playerPhone: phone,
+
+    courtLabel: asString(availability.courtLabel),
+
+    dateHeure,
+    durationMinutes: availability.durationMinutes,
+
+    price:
+      availability.price === undefined
+        ? null
+        : availability.price,
+
+    status: "pending",
+
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
+  const ref = await db.collection("clubReservations").add(reservation);
+
+try {
+  const clubId = asString(availability.clubId);
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+  if (clubSnap.exists) {
+    const adminUid = asString(clubSnap.get("adminUid"));
+
+    if (adminUid) {
+      const tokens = await tokensOf(adminUid);
+
+      if (tokens.length) {
+        const playerName = asString(user.pseudo || user.username || "");
+        const courtLabel = asString(availability.courtLabel || "ce terrain");
+
+        await send(tokens, {
+          title: "Nouvelle demande de réservation 🎾",
+          body: playerName
+            ? `${playerName} souhaite réserver ${courtLabel}.`
+            : `Un joueur souhaite réserver ${courtLabel}.`,
+          data: {
+            type: "club_reservation",
+            subtype: "request",
+            reservationId: ref.id,
+            availabilityId,
+            clubId,
+          },
+        });
+      }
+    }
+  }
+} catch (e) {
+  logger.warn("requestClubReservation notification failed", {
+    reservationId: ref.id,
+    availabilityId,
+    uid,
+    err: String(e?.message ?? e),
+  });
+}
+
+logger.info("requestClubReservation ok", {
+  reservationId: ref.id,
+  availabilityId,
+  uid,
+});
+
+  return {
+    ok: true,
+    reservationId: ref.id,
+  };
+});
+
+// ======================================================
+// CALLABLE — confirmClubReservation
+// ======================================================
+export const confirmClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const reservationId = asString(req.data?.reservationId);
+  if (!reservationId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: reservationId missing");
+  }
+
+  const reservationRef = db.collection("clubReservations").doc(reservationId);
+
+    let notifyPayload = null;
+    let rejectedReservationPayloads = [];
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+
+    if (!reservationSnap.exists) {
+      throw new HttpsError("not-found", "RESERVATION_NOT_FOUND");
+    }
+
+    const reservation = reservationSnap.data() || {};
+    const clubId = asString(reservation.clubId);
+    const availabilityId = asString(reservation.availabilityId);
+    const playerUid = asString(reservation.playerUid);
+    const dateHeure = normalizeDateMs(reservation.dateHeure);
+
+    if (!clubId || !availabilityId || !playerUid || !dateHeure) {
+      throw new HttpsError("failed-precondition", "RESERVATION_INVALID");
+    }
+
+    if (dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "RESERVATION_PAST");
+    }
+
+    const clubRef = db.collection("clubs").doc(clubId);
+    const clubSnap = await tx.get(clubRef);
+
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    if (asString(reservation.status) !== "pending") {
+      throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
+    }
+
+    const availabilityRef = db.collection("clubAvailabilities").doc(availabilityId);
+    const availabilitySnap = await tx.get(availabilityRef);
+
+    if (!availabilitySnap.exists) {
+      throw new HttpsError(
+        "failed-precondition",
+        "AVAILABILITY_NOT_FOUND"
+      );
+    }
+
+    const availability = availabilitySnap.data() || {};
+    const availabilityStatus = asString(availability.status);
+
+    const availabilityParticipants =
+      Array.isArray(availability.participants)
+        ? availability.participants
+        : [];
+
+    const participantUids =
+      cleanUids(availabilityParticipants);
+
+    if (availabilityStatus !== "open") {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
+    }
+
+    const alreadyConfirmedSnap = await tx.get(
+      db.collection("clubReservations")
+        .where("availabilityId", "==", availabilityId)
+        .where("status", "==", "confirmed")
+        .limit(1)
+    );
+
+    if (!alreadyConfirmedSnap.empty) {
+      throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
+    }
+
+      const otherPendingReservationsSnap = await tx.get(
+        db.collection("clubReservations")
+          .where("availabilityId", "==", availabilityId)
+          .where("status", "==", "pending")
+          .limit(50)
+      );
+
+    const matchOverlap = await hasTimeOverlap(playerUid, dateHeure);
+    if (matchOverlap) {
+      throw new HttpsError("failed-precondition", "TIME_OVERLAP");
+    }
+
+    const reservationOverlapSnap = await tx.get(
+      db.collection("clubReservations")
+        .where("playerUid", "==", playerUid)
+        .where("status", "in", ["pending", "confirmed"])
+        .limit(50)
+    );
+
+    for (const doc of reservationOverlapSnap.docs) {
+      if (doc.id === reservationId) continue;
+
+      const data = doc.data() || {};
+      const ms = normalizeDateMs(data.dateHeure);
+      const start = dateHeure - 2 * HOUR_MS;
+      const end = dateHeure + 2 * HOUR_MS;
+
+      if (ms >= start && ms <= end) {
+        throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+      }
+    }
+
+      notifyPayload = {
+        playerUid,
+        availabilityId,
+        clubId,
+        courtLabel: asString(reservation.courtLabel || "votre terrain"),
+        participantUids: participantUids.filter((participantUid) => participantUid !== playerUid),
+      };
+
+    tx.update(availabilityRef, {
+      status: "converted",
+      confirmedReservationId: reservationId,
+      reservedByUid: playerUid,
+      reservedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    tx.update(reservationRef, {
+      status: "confirmed",
+      confirmedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    for (const pendingDoc of otherPendingReservationsSnap.docs) {
+        if (pendingDoc.id === reservationId) continue;
+
+        const pendingData = pendingDoc.data() || {};
+        const pendingPlayerUid = asString(pendingData.playerUid);
+
+        tx.update(pendingDoc.ref, {
+          status: "rejected",
+          rejectedAt: FieldValue.serverTimestamp(),
+          rejectionReason: "availability_reserved",
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        if (pendingPlayerUid) {
+          rejectedReservationPayloads.push({
+            reservationId: pendingDoc.id,
+            playerUid: pendingPlayerUid,
+          });
+        }
+      }
+
+  });
+
+  if (notifyPayload?.playerUid) {
+    try {
+      const playerTokens =
+        await tokensOf(notifyPayload.playerUid);
+
+      if (playerTokens.length) {
+        await send(playerTokens, {
+          title: "Réservation confirmée ✅",
+          body:
+            `Le club a accepté votre réservation pour ` +
+            `${notifyPayload.courtLabel}.`,
+          data: {
+            type: "club_reservation",
+            subtype: "confirmed",
+            reservationId,
+            availabilityId:
+              notifyPayload.availabilityId,
+            clubId: notifyPayload.clubId,
+          },
+        });
+      }
+    } catch (e) {
+      logger.warn(
+        "confirmClubReservation player notification failed",
+        {
+          reservationId,
+          playerUid: notifyPayload.playerUid,
+          availabilityId:
+            notifyPayload.availabilityId,
+          err: String(e?.message ?? e),
+        }
+      );
+    }
+  }
+
+    if (notifyPayload?.participantUids?.length) {
+      try {
+        const tokenMap = await getTokens(notifyPayload.participantUids);
+        const participantTokens = Array.from(tokenMap.values()).flat();
+
+        if (participantTokens.length) {
+          await send(participantTokens, {
+            title: "Créneau réservé",
+            body: `${notifyPayload.courtLabel} a été réservé par un autre joueur et n’est plus disponible.`,
+            data: {
+              type: "club_availability",
+              subtype: "reserved",
+              availabilityId,
+              clubId: notifyPayload.clubId,
+            },
+          });
+        }
+      } catch (e) {
+        logger.warn("confirmClubReservation participant notification failed", {
+          reservationId,
+          availabilityId,
+          err: String(e?.message ?? e),
+        });
+      }
+    }
+
+    for (const rejectedPayload of rejectedReservationPayloads) {
+      try {
+        const tokens = await tokensOf(rejectedPayload.playerUid);
+
+        if (tokens.length) {
+          await send(tokens, {
+            title: "Réservation indisponible",
+            body: `${notifyPayload?.courtLabel || "Ce terrain"} vient d’être réservé par un autre joueur.`,
+            data: {
+              type: "club_reservation",
+              subtype: "rejected",
+              reservationId: rejectedPayload.reservationId,
+              availabilityId,
+              clubId: notifyPayload?.clubId || "",
+              reason: "availability_reserved",
+            },
+          });
+        }
+      } catch (e) {
+        logger.warn("confirmClubReservation competing request notification failed", {
+          reservationId: rejectedPayload.reservationId,
+          availabilityId,
+          err: String(e?.message ?? e),
+        });
+      }
+    }
+
+  logger.info("confirmClubReservation ok", {
+    reservationId,
+    uid,
+  });
+
+  return { ok: true, reservationId };
+});
+
+
+// ======================================================
+// CALLABLE — rejectClubReservation
+// ======================================================
+export const rejectClubReservation = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const reservationId = asString(req.data?.reservationId);
+  if (!reservationId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: reservationId missing");
+  }
+
+  const ref = db.collection("clubReservations").doc(reservationId);
+
+let notifyPayload = null;
+
+await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "RESERVATION_NOT_FOUND");
+    }
+
+    const reservation = snap.data() || {};
+    const clubId = asString(reservation.clubId);
+
+    const clubSnap = await tx.get(db.collection("clubs").doc(clubId));
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    if (asString(clubSnap.get("adminUid")) !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+
+    if (asString(reservation.status) !== "pending") {
+      throw new HttpsError("failed-precondition", "RESERVATION_NOT_PENDING");
+    }
+
+notifyPayload = {
+  playerUid: asString(reservation.playerUid),
+  availabilityId: asString(reservation.availabilityId),
+  clubId,
+  courtLabel: asString(reservation.courtLabel || "votre terrain"),
+};
+
+    tx.update(ref, {
+      status: "rejected",
+      rejectedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+if (notifyPayload?.playerUid) {
+  try {
+    const tokens = await tokensOf(notifyPayload.playerUid);
+
+    if (tokens.length) {
+      await send(tokens, {
+        title: "Réservation refusée",
+        body: `Le club n’a pas pu accepter votre demande pour ${notifyPayload.courtLabel}.`,
+        data: {
+          type: "club_reservation",
+          subtype: "rejected",
+          reservationId,
+          availabilityId: notifyPayload.availabilityId,
+          clubId: notifyPayload.clubId,
+        },
+      });
+    }
+  } catch (e) {
+    logger.warn("rejectClubReservation notification failed", {
+      reservationId,
+      err: String(e?.message ?? e),
+    });
+  }
+}
+
+  logger.info("rejectClubReservation ok", {
+    reservationId,
+    uid,
+  });
+
+  return { ok: true, reservationId };
+});
+
+// ======================================================
+// CALLABLE — cancelClubReservation
+// - Le joueur peut annuler uniquement sa propre demande pending
+// ======================================================
+export const cancelClubReservation = onCall(
+  RUNTIME,
+  async (req) => {
+    const uid = assertAuth(req);
+
+    const reservationId =
+      asString(req.data?.reservationId);
+
+    if (!reservationId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: reservationId missing"
+      );
+    }
+
+    const reservationRef =
+      db.collection("clubReservations")
+        .doc(reservationId);
+
+    let notifyPayload = null;
+
+    await db.runTransaction(async (tx) => {
+      const reservationSnap =
+        await tx.get(reservationRef);
+
+      if (!reservationSnap.exists) {
+        throw new HttpsError(
+          "not-found",
+          "RESERVATION_NOT_FOUND"
+        );
+      }
+
+      const reservation =
+        reservationSnap.data() || {};
+
+      const playerUid =
+        asString(reservation.playerUid);
+
+      if (!playerUid || playerUid !== uid) {
+        throw new HttpsError(
+          "permission-denied",
+          "NOT_RESERVATION_OWNER"
+        );
+      }
+
+      if (asString(reservation.status) !== "pending") {
+        throw new HttpsError(
+          "failed-precondition",
+          "RESERVATION_NOT_PENDING"
+        );
+      }
+
+      notifyPayload = {
+        clubId: asString(reservation.clubId),
+        playerName: asString(
+          reservation.playerName || "Un joueur"
+        ),
+        courtLabel: asString(
+          reservation.courtLabel || "ce terrain"
+        ),
+        availabilityId: asString(
+          reservation.availabilityId
+        ),
+      };
+
+      tx.update(reservationRef, {
+        status: "cancelled",
+        cancelledAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    if (notifyPayload?.clubId) {
+      try {
+        const clubSnap =
+          await db.collection("clubs")
+            .doc(notifyPayload.clubId)
+            .get();
+
+        if (clubSnap.exists) {
+          const adminUid =
+            asString(clubSnap.get("adminUid"));
+
+          if (adminUid) {
+            const tokens =
+              await tokensOf(adminUid);
+
+            if (tokens.length) {
+              await send(tokens, {
+                title: "Demande annulée",
+                body:
+                  `${notifyPayload.playerName} a annulé ` +
+                  `sa demande pour ${notifyPayload.courtLabel}.`,
+                data: {
+                  type: "club_reservation",
+                  subtype: "cancelled",
+                  reservationId,
+                  availabilityId:
+                    notifyPayload.availabilityId,
+                  clubId: notifyPayload.clubId,
+                },
+              });
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(
+          "cancelClubReservation notification failed",
+          {
+            reservationId,
+            uid,
+            err: String(e?.message ?? e),
+          }
+        );
+      }
+    }
+
+    logger.info("cancelClubReservation ok", {
+      reservationId,
+      uid,
+    });
+
+    return {
+      ok: true,
+      reservationId,
+    };
+  }
+);
 
 // ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)
@@ -757,6 +2270,10 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
   if (await hasTimeOverlap(uid, dateHeure)) {
     throw new HttpsError("failed-precondition", "TIME_OVERLAP");
   }
+
+if (await hasReservationOverlap(uid, dateHeure)) {
+  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
+}
 
   await db.runTransaction(async (tx) => {
     const fresh = await tx.get(matchRef);
@@ -834,7 +2351,172 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
   logger.info("leaveMatch ok", { matchId, uid });
   return { ok: true, matchId };
 });
+// ======================================================
+// CALLABLE — deleteMatch
+// ======================================================
+export const deleteMatch = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
 
+  const matchId = asString(req.data?.matchId);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+  }
+
+  const matchRef = db.collection("matches").doc(matchId);
+  const snap = await matchRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  }
+
+  const match = snap.data() || {};
+  const createdByType = asString(match.createdByType || "player");
+  const createurUid = asString(match.createurUid);
+  const clubId = asString(match.clubId || match.createdById);
+
+  if (createdByType === "club") {
+    const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    const club = clubSnap.data() || {};
+    const adminUid = asString(club.adminUid);
+
+    if (adminUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+  } else {
+    if (createurUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_MATCH_OWNER");
+    }
+  }
+
+  await matchRef.delete();
+
+  logger.info("deleteMatch ok", {
+    matchId,
+    uid,
+    createdByType,
+    clubId: clubId || null,
+  });
+
+  return { ok: true, matchId };
+});
+
+// ======================================================
+// CALLABLE — updateMatch
+// ======================================================
+export const updateMatch = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+
+  const matchId = asString(req.data?.matchId);
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
+  }
+
+  const matchRef = db.collection("matches").doc(matchId);
+  const snap = await matchRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "MATCH_NOT_FOUND");
+  }
+
+  const existing = snap.data() || {};
+  const createdByType = asString(existing.createdByType || "player");
+  const createurUid = asString(existing.createurUid);
+  const clubId = asString(existing.clubId || existing.createdById);
+
+  if (createdByType === "club") {
+    const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+    if (!clubSnap.exists) {
+      throw new HttpsError("failed-precondition", "CLUB_NOT_FOUND");
+    }
+
+    const club = clubSnap.data() || {};
+    const adminUid = asString(club.adminUid);
+
+    if (adminUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_CLUB_OWNER");
+    }
+  } else {
+    if (createurUid !== uid) {
+      throw new HttpsError("permission-denied", "NOT_MATCH_OWNER");
+    }
+  }
+
+  const patch = {};
+
+  if ("dateHeure" in req.data) {
+    const dateHeure = normalizeDateMs(req.data.dateHeure);
+    if (!dateHeure) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: dateHeure invalid");
+    }
+    if (dateHeure <= Date.now()) {
+      throw new HttpsError("failed-precondition", "MATCH_PAST");
+    }
+    patch.dateHeure = dateHeure;
+  }
+
+  if ("niveau" in req.data || "level" in req.data) {
+    const niveauRaw = req.data?.niveau ?? req.data?.level;
+    const niveau = typeof niveauRaw === "number" ? Math.round(niveauRaw) : Number(niveauRaw);
+
+    if (!(Number.isFinite(niveau) && niveau >= 1 && niveau <= 10)) {
+      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
+    }
+
+    patch.niveau = niveau;
+    patch.level = niveau;
+  }
+
+  if ("description" in req.data) {
+    const descRaw = asString(req.data.description);
+    const desc = descRaw ? descRaw.trim() : "";
+
+    if (desc.length > 0) {
+      patch.description = desc;
+    } else {
+      patch.description = FieldValue.delete();
+    }
+  }
+
+  if ("courtLabel" in req.data) {
+    if (createdByType !== "club") {
+      throw new HttpsError(
+        "failed-precondition",
+        "COURT_LABEL_CLUB_ONLY"
+      );
+    }
+
+    const courtLabel = asString(req.data.courtLabel).trim();
+
+    if (!courtLabel || courtLabel.length > 80) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: courtLabel invalid"
+      );
+    }
+
+    patch.courtLabel = courtLabel;
+  }
+
+  patch.updatedAt = FieldValue.serverTimestamp();
+
+  await matchRef.set(patch, { merge: true });
+
+  logger.info("updateMatch ok", {
+    matchId,
+    uid,
+    createdByType,
+    clubId: clubId || null,
+    changedKeys: Object.keys(patch),
+  });
+
+  return { ok: true, matchId };
+});
 // ======================================================
 // pushNearbyMatch (CALLABLE) — COMPAT PROD
 // data: { matchId: string }
@@ -864,6 +2546,32 @@ export const pushNearbyMatchTrigger = onDocumentCreated(
 );
 
 // ======================================================
+// TRIGGER — nouvelle disponibilité Club proche
+// - uniquement à la création du document
+// - exclut tous les comptes Club
+// ======================================================
+export const pushNearbyClubAvailabilityTrigger = onDocumentCreated(
+  {
+    region: "europe-west1",
+    document: "clubAvailabilities/{availabilityId}",
+  },
+  async (event) => {
+    const availabilityId = event.params.availabilityId;
+
+    try {
+      await pushNearbyForClubAvailabilityId(availabilityId);
+    } catch (error) {
+      logger.error("pushNearbyClubAvailabilityTrigger failed", {
+        availabilityId,
+        err: String(error?.message ?? error),
+      });
+    }
+
+    return null;
+  }
+);
+
+// ======================================================
 // TRIGGER — JOIN / LEAVE + notif urgente 3/4
 // ======================================================
 export const onMatchParticipantsChange = onDocumentUpdated(
@@ -888,10 +2596,31 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 
     const m = event.data.after.data() || {};
     const lieu = asString(m.lieu || m.placeName || "le club");
-    const createurUid = asString(m.createurUid || m.creatorUid);
+
+    const createdByType = asString(m.createdByType || "player");
+
+    let ownerUid = "";
+
+    if (createdByType === "club") {
+      const clubId = asString(m.clubId || m.createdById);
+
+      if (clubId) {
+        const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+        if (clubSnap.exists) {
+          ownerUid = asString(clubSnap.get("adminUid"));
+        }
+      }
+    } else {
+      ownerUid = asString(m.createurUid || m.creatorUid);
+    }
 
     const recipients = new Set(after);
-    if (createurUid) recipients.add(createurUid);
+
+    if (ownerUid) {
+      recipients.add(ownerUid);
+    }
+
     joined.forEach((u) => recipients.delete(u));
     left.forEach((u) => recipients.delete(u));
 
@@ -1216,6 +2945,174 @@ export const rejectClubSuggestion = onCall(RUNTIME, async (req) => {
 
   return { ok: true };
 });
+
+
+// ======================================================
+// PADIMA CLUB — account lifecycle
+// ======================================================
+
+function cleanOptionalString(v) {
+  const s = asString(v);
+  return s.length ? s : null;
+}
+
+function cleanOptionalNumber(v) {
+  const n = asNumber(v);
+  return n === null ? null : n;
+}
+
+function assertValidClubStatus(status) {
+  if (!["pending", "approved", "rejected"].includes(status)) {
+    throw new HttpsError("invalid-argument", "INVALID_CLUB_STATUS");
+  }
+}
+
+export const choosePlayerRole = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const userRef = db.collection("users").doc(uid);
+
+  await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) {
+      throw new HttpsError("failed-precondition", "USER_PROFILE_NOT_FOUND");
+    }
+
+    const currentRole = asString(userSnap.get("role"));
+    const currentClubId = asString(userSnap.get("clubId"));
+
+    if (currentRole && currentRole !== "player") {
+      throw new HttpsError("failed-precondition", "ROLE_ALREADY_SET");
+    }
+
+    if (currentClubId) {
+      throw new HttpsError("failed-precondition", "USER_ALREADY_HAS_CLUB");
+    }
+
+    tx.set(userRef, {
+      role: "player",
+      clubId: "",
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  logger.info("choosePlayerRole ok", { uid });
+  return { ok: true, role: "player" };
+});
+
+export const createPadimaClub = onCall(RUNTIME, async (req) => {
+  const uid = assertAuth(req);
+  const data = req.data || {};
+
+  const name = asString(data.name);
+  const city = asString(data.city);
+  const address = asString(data.address);
+  const latitude = asNumber(data.latitude);
+  const longitude = asNumber(data.longitude);
+
+  if (!name || !city || !address) {
+    throw new HttpsError("invalid-argument", "MISSING_CLUB_IDENTITY");
+  }
+
+  if (latitude === null || longitude === null) {
+    throw new HttpsError("invalid-argument", "MISSING_CLUB_LOCATION");
+  }
+
+  const userRef = db.collection("users").doc(uid);
+  const clubRef = db.collection("clubs").doc();
+
+  await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    if (!userSnap.exists) {
+      throw new HttpsError("failed-precondition", "USER_PROFILE_NOT_FOUND");
+    }
+
+    if (asString(userSnap.get("clubId"))) {
+      throw new HttpsError("already-exists", "USER_ALREADY_HAS_CLUB");
+    }
+
+    tx.set(clubRef, {
+      name,
+      city,
+      address,
+      latitude,
+      longitude,
+      adminUid: uid,
+      status: "pending",
+
+      logoUrl: cleanOptionalString(data.logoUrl),
+      coverUrl: cleanOptionalString(data.coverUrl),
+      phone: cleanOptionalString(data.phone),
+      email: cleanOptionalString(data.email),
+      website: cleanOptionalString(data.website),
+      courtsCount: cleanOptionalNumber(data.courtsCount),
+      description: cleanOptionalString(data.description),
+
+      approvedAt: null,
+      rejectedAt: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    tx.set(userRef, {
+      role: "club_admin",
+      clubId: clubRef.id,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  logger.info("createPadimaClub ok", { uid, clubId: clubRef.id });
+  return { ok: true, clubId: clubRef.id, status: "pending" };
+});
+
+export const approvePadimaClub = onCall(RUNTIME, async (req) => {
+  assertAdmin(req);
+
+  const clubId = asString(req.data?.clubId);
+  if (!clubId) throw new HttpsError("invalid-argument", "MISSING_CLUB_ID");
+
+  const clubRef = db.collection("clubs").doc(clubId);
+
+  await db.runTransaction(async (tx) => {
+    const clubSnap = await tx.get(clubRef);
+    if (!clubSnap.exists) throw new HttpsError("not-found", "CLUB_NOT_FOUND");
+
+    assertValidClubStatus(asString(clubSnap.get("status")) || "pending");
+
+    tx.set(clubRef, {
+      status: "approved",
+      approvedAt: FieldValue.serverTimestamp(),
+      rejectedAt: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return { ok: true, clubId, status: "approved" };
+});
+
+export const rejectPadimaClub = onCall(RUNTIME, async (req) => {
+  assertAdmin(req);
+
+  const clubId = asString(req.data?.clubId);
+  if (!clubId) throw new HttpsError("invalid-argument", "MISSING_CLUB_ID");
+
+  const clubRef = db.collection("clubs").doc(clubId);
+
+  await db.runTransaction(async (tx) => {
+    const clubSnap = await tx.get(clubRef);
+    if (!clubSnap.exists) throw new HttpsError("not-found", "CLUB_NOT_FOUND");
+
+    assertValidClubStatus(asString(clubSnap.get("status")) || "pending");
+
+    tx.set(clubRef, {
+      status: "rejected",
+      rejectedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+
+  return { ok: true, clubId, status: "rejected" };
+});
+
 
 // ======================================================
 // BROADCAST — admin (compat prod)
