@@ -126,6 +126,36 @@ function isValidFriendName(name) {
   return t.length >= 1 && t.length <= 24;
 }
 
+function normalizeFrenchPhone(value) {
+  const raw = asString(value);
+
+  if (!raw) return null;
+
+  let digits = raw.replace(/[^0-9+]/g, "");
+
+  if (digits.startsWith("0033")) {
+    digits = `+33${digits.slice(4)}`;
+  }
+
+  if (digits.startsWith("+33")) {
+    const national = digits.slice(3);
+
+    // +33 suivi de 9 chiffres, sans le zéro national.
+    if (!/^[1-9][0-9]{8}$/.test(national)) {
+      return null;
+    }
+
+    return `+33${national}`;
+  }
+
+  // Format national français : 0 suivi de 9 chiffres.
+  if (/^0[1-9][0-9]{8}$/.test(digits)) {
+    return `+33${digits.slice(1)}`;
+  }
+
+  return null;
+}
+
 function frTime(ms) {
   return new Intl.DateTimeFormat("fr-FR", {
     timeZone: "Europe/Paris",
@@ -250,6 +280,15 @@ function copyFor(type, subtype, ctx = {}) {
     };
   }
 
+if (type === "club_availability" && subtype === "new") {
+  return {
+    title: "🎾 Terrain disponible près de toi",
+    body: heure
+      ? `${lieu} • ${heure}`
+      : `${lieu}`,
+  };
+}
+
 if (type === "club_availability" && subtype === "join") {
   return {
     title: "Nouveau joueur inscrit 🎾",
@@ -346,6 +385,44 @@ async function sendChatHybrid(tokens, { title, body, data }) {
     }
   } catch (e) {
     logger.error("sendChatHybrid multicast error", e);
+  }
+}
+
+/**
+ * Envoi visible hybride :
+ * - Android : data-only, traité par MyFirebaseMessagingService
+ * - iOS : notification APNS visible
+ * - title/body inclus dans data pour Android
+ */
+async function sendVisibleHybrid(tokens, { title, body, data }) {
+  if (!Array.isArray(tokens) || !tokens.length) return;
+
+  const safeData = Object.fromEntries(
+    Object.entries({
+      ...(data || {}),
+      title,
+      body,
+    }).map(([k, v]) => [k, String(v)])
+  );
+
+  try {
+    const res = await messaging.sendEachForMulticast({
+      tokens,
+      android: {
+        priority: "high",
+      },
+      apns: apnsPayload(title, body),
+      data: safeData,
+    });
+
+    if (res.failureCount) {
+      logger.warn("sendVisibleHybrid multicast failures", {
+        failureCount: res.failureCount,
+        successCount: res.successCount,
+      });
+    }
+  } catch (e) {
+    logger.error("sendVisibleHybrid multicast error", e);
   }
 }
 
@@ -636,6 +713,246 @@ async function findEligibleRecipients(matchData, opts = {}) {
   }
 
   return recipients;
+}
+
+// ======================================================
+// CLUB AVAILABILITY / USER TARGETING HELPERS
+// ======================================================
+function isClubAccount(userData) {
+  const role = asString(userData?.role);
+
+  return role === "club_admin"
+    || role === "club"
+    || asString(userData?.clubId).length > 0;
+}
+
+function isUserEligibleForClubAvailability(
+  userData,
+  uid,
+  availabilityData,
+  availabilityCoords,
+  opts = {}
+) {
+  if (userData?.notificationsEnabled !== true) return false;
+
+  // Aucun compte Club ne reçoit les notifications joueur.
+  if (isClubAccount(userData)) return false;
+
+  const createdByUid = asString(availabilityData?.createdByUid);
+  if (createdByUid && createdByUid === uid) return false;
+
+  if (
+    typeof userData?.notifLat !== "number"
+    || typeof userData?.notifLng !== "number"
+    || typeof userData?.notifRadiusKm !== "number"
+  ) {
+    return false;
+  }
+
+  if (!availabilityCoords) return false;
+
+  const userCoords = {
+    lat: userData.notifLat,
+    lng: userData.notifLng,
+  };
+
+  if (
+    distanceKmApprox(userCoords, availabilityCoords)
+    > userData.notifRadiusKm
+  ) {
+    return false;
+  }
+
+  const status = asString(availabilityData?.status || "open");
+  if (status !== "open" && status !== "available") return false;
+
+  if (
+    availabilityData?.joinPlayers !== true
+    && availabilityData?.reserveFullCourt !== true
+  ) {
+    return false;
+  }
+
+  const participants = Array.isArray(availabilityData?.participants)
+    ? availabilityData.participants
+    : [];
+
+  if (
+    participants.some((participant) =>
+      participant === uid
+      || (
+        typeof participant === "string"
+        && participant.startsWith(`ami_de_${uid}:`)
+      )
+    )
+  ) {
+    return false;
+  }
+
+  if (participants.length >= MAX_PLAYERS) return false;
+
+  const availabilityMs = toMillis(availabilityData?.dateHeure);
+  if (!availabilityMs) return false;
+
+  const now = Date.now();
+  if (availabilityMs <= now) return false;
+
+  if (typeof opts.maxHoursAhead === "number") {
+    const maxMs = now + opts.maxHoursAhead * HOUR_MS;
+    if (availabilityMs > maxMs) return false;
+  }
+
+  return true;
+}
+
+async function findEligibleRecipientsForClubAvailability(
+  availabilityData,
+  availabilityCoords,
+  opts = {}
+) {
+  const usersSnap = await db.collection("users")
+    .where("notificationsEnabled", "==", true)
+    .get();
+
+  if (usersSnap.empty) return [];
+
+  const recipients = [];
+
+  for (const userDoc of usersSnap.docs) {
+    const uid = userDoc.id;
+    const userData = userDoc.data() || {};
+
+    if (
+      isUserEligibleForClubAvailability(
+        userData,
+        uid,
+        availabilityData,
+        availabilityCoords,
+        opts
+      )
+    ) {
+      recipients.push(uid);
+    }
+  }
+
+  return recipients;
+}
+
+// ======================================================
+// INTERNAL — push nearby notifications for a Club availability
+// ======================================================
+async function pushNearbyForClubAvailabilityId(availabilityId) {
+  const availabilitySnap = await db.collection("clubAvailabilities")
+    .doc(availabilityId)
+    .get();
+
+  if (!availabilitySnap.exists) {
+    logger.warn("pushNearbyForClubAvailabilityId: availability missing", {
+      availabilityId,
+    });
+    return;
+  }
+
+  const availability = availabilitySnap.data() || {};
+
+  const status = asString(availability.status || "open");
+  if (status !== "open" && status !== "available") return;
+
+  const dateHeure = toMillis(availability.dateHeure);
+  if (!dateHeure || dateHeure <= Date.now()) return;
+
+  if (
+    availability.joinPlayers !== true
+    && availability.reserveFullCourt !== true
+  ) {
+    return;
+  }
+
+  const clubId = asString(availability.clubId);
+  if (!clubId) return;
+
+  const clubSnap = await db.collection("clubs").doc(clubId).get();
+  if (!clubSnap.exists) {
+    logger.warn("pushNearbyForClubAvailabilityId: club missing", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const club = clubSnap.data() || {};
+
+  const lat = asNumber(club.latitude) ?? asNumber(club.lat);
+  const lng = asNumber(club.longitude) ?? asNumber(club.lng);
+
+  if (lat === null || lng === null) {
+    logger.warn("pushNearbyForClubAvailabilityId: club coords missing", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const availabilityCoords = { lat, lng };
+
+  const recipientUids =
+    await findEligibleRecipientsForClubAvailability(
+      availability,
+      availabilityCoords,
+      { maxHoursAhead: 24 }
+    );
+
+  if (!recipientUids.length) {
+    logger.info("pushNearbyForClubAvailabilityId: no eligible recipient", {
+      availabilityId,
+      clubId,
+    });
+    return;
+  }
+
+  const clubName =
+    asString(availability.clubName)
+    || asString(club.name)
+    || "Un club";
+
+  const courtLabel =
+    asString(availability.courtLabel)
+    || "un terrain";
+
+  const lieu = `${clubName} — ${courtLabel}`;
+  const heure = frTime(dateHeure);
+
+  let sentUsers = 0;
+
+  for (const uid of recipientUids) {
+    const tokens = await tokensOf(uid);
+    if (!tokens.length) continue;
+
+    const copy = copyFor("club_availability", "new", {
+      lieu,
+      heure,
+    });
+
+    await sendVisibleHybrid(tokens, {
+      title: copy.title,
+      body: copy.body,
+      data: {
+        type: "club_availability",
+        subtype: "new",
+        availabilityId,
+        clubId,
+      },
+    });
+
+    sentUsers += 1;
+  }
+
+  logger.info("pushNearbyForClubAvailabilityId complete", {
+    availabilityId,
+    clubId,
+    eligibleUsers: recipientUids.length,
+    sentUsers,
+  });
 }
 
 // ======================================================
@@ -1281,14 +1598,14 @@ export const requestClubReservation = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
 
   const availabilityId = asString(req.data?.availabilityId);
-  const phone = asString(req.data?.phone);
+  const phone = normalizeFrenchPhone(req.data?.phone);
 
   if (!availabilityId) {
     throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: availabilityId missing");
   }
 
   if (!phone) {
-    throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: phone missing");
+    throw new HttpsError("invalid-argument", "INVALID_PHONE");
   }
 
   const availabilityRef = db.collection("clubAvailabilities").doc(availabilityId);
@@ -1444,8 +1761,9 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
 
   const reservationRef = db.collection("clubReservations").doc(reservationId);
 	
-let notifyPayload = null;
-
+    let notifyPayload = null;
+    let rejectedReservationPayloads = [];
+    
   await db.runTransaction(async (tx) => {
     const reservationSnap = await tx.get(reservationRef);
 
@@ -1489,9 +1807,12 @@ let notifyPayload = null;
       throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_FOUND");
     }
 
-    const availability = availabilitySnap.data() || {};
-    const availabilityStatus = asString(availability.status || "open");
+      const availabilityParticipants = Array.isArray(availability.participants)
+        ? availability.participants
+        : [];
 
+      const participantUids = cleanUids(availabilityParticipants);
+      
     if (availabilityStatus !== "open") {
       throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
     }
@@ -1506,6 +1827,13 @@ let notifyPayload = null;
     if (!alreadyConfirmedSnap.empty) {
       throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
     }
+      
+      const otherPendingReservationsSnap = await tx.get(
+        db.collection("clubReservations")
+          .where("availabilityId", "==", availabilityId)
+          .where("status", "==", "pending")
+          .limit(50)
+      );
 
     const matchOverlap = await hasTimeOverlap(playerUid, dateHeure);
     if (matchOverlap) {
@@ -1532,12 +1860,13 @@ let notifyPayload = null;
       }
     }
 
-notifyPayload = {
-  playerUid,
-  availabilityId,
-  clubId,
-  courtLabel: asString(reservation.courtLabel || "votre terrain"),
-};
+      notifyPayload = {
+        playerUid,
+        availabilityId,
+        clubId,
+        courtLabel: asString(reservation.courtLabel || "votre terrain"),
+        participantUids: participantUids.filter((participantUid) => participantUid !== playerUid),
+      };
 
     tx.update(reservationRef, {
       status: "confirmed",
@@ -1545,37 +1874,81 @@ notifyPayload = {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    tx.update(availabilityRef, {
-      status: "reserved",
-      reservedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+      for (const pendingDoc of otherPendingReservationsSnap.docs) {
+        if (pendingDoc.id === reservationId) continue;
+
+        const pendingData = pendingDoc.data() || {};
+        const pendingPlayerUid = asString(pendingData.playerUid);
+
+        tx.update(pendingDoc.ref, {
+          status: "rejected",
+          rejectedAt: FieldValue.serverTimestamp(),
+          rejectionReason: "availability_reserved",
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        if (pendingPlayerUid) {
+          rejectedReservationPayloads.push({
+            reservationId: pendingDoc.id,
+            playerUid: pendingPlayerUid,
+          });
+        }
+      }
+      
   });
 
-if (notifyPayload?.playerUid) {
-  try {
-    const tokens = await tokensOf(notifyPayload.playerUid);
+    if (notifyPayload?.participantUids?.length) {
+      try {
+        const tokenMap = await getTokens(notifyPayload.participantUids);
+        const participantTokens = Array.from(tokenMap.values()).flat();
 
-    if (tokens.length) {
-      await send(tokens, {
-        title: "Réservation confirmée ✅",
-        body: `Le club a confirmé votre réservation pour ${notifyPayload.courtLabel}.`,
-        data: {
-          type: "club_reservation",
-          subtype: "confirmed",
+        if (participantTokens.length) {
+          await send(participantTokens, {
+            title: "Créneau réservé",
+            body: `${notifyPayload.courtLabel} a été réservé par un autre joueur et n’est plus disponible.`,
+            data: {
+              type: "club_availability",
+              subtype: "reserved",
+              availabilityId,
+              clubId: notifyPayload.clubId,
+            },
+          });
+        }
+      } catch (e) {
+        logger.warn("confirmClubReservation participant notification failed", {
           reservationId,
-          availabilityId: notifyPayload.availabilityId,
-          clubId: notifyPayload.clubId,
-        },
-      });
+          availabilityId,
+          err: String(e?.message ?? e),
+        });
+      }
     }
-  } catch (e) {
-    logger.warn("confirmClubReservation notification failed", {
-      reservationId,
-      err: String(e?.message ?? e),
-    });
-  }
-}
+    
+    for (const rejectedPayload of rejectedReservationPayloads) {
+      try {
+        const tokens = await tokensOf(rejectedPayload.playerUid);
+
+        if (tokens.length) {
+          await send(tokens, {
+            title: "Réservation indisponible",
+            body: `${notifyPayload?.courtLabel || "Ce terrain"} vient d’être réservé par un autre joueur.`,
+            data: {
+              type: "club_reservation",
+              subtype: "rejected",
+              reservationId: rejectedPayload.reservationId,
+              availabilityId,
+              clubId: notifyPayload?.clubId || "",
+              reason: "availability_reserved",
+            },
+          });
+        }
+      } catch (e) {
+        logger.warn("confirmClubReservation competing request notification failed", {
+          reservationId: rejectedPayload.reservationId,
+          availabilityId,
+          err: String(e?.message ?? e),
+        });
+      }
+    }
 
   logger.info("confirmClubReservation ok", {
     reservationId,
@@ -1926,6 +2299,26 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
     }
   }
 
+  if ("courtLabel" in req.data) {
+    if (createdByType !== "club") {
+      throw new HttpsError(
+        "failed-precondition",
+        "COURT_LABEL_CLUB_ONLY"
+      );
+    }
+
+    const courtLabel = asString(req.data.courtLabel).trim();
+
+    if (!courtLabel || courtLabel.length > 80) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: courtLabel invalid"
+      );
+    }
+
+    patch.courtLabel = courtLabel;
+  }
+
   patch.updatedAt = FieldValue.serverTimestamp();
 
   await matchRef.set(patch, { merge: true });
@@ -1969,6 +2362,32 @@ export const pushNearbyMatchTrigger = onDocumentCreated(
 );
 
 // ======================================================
+// TRIGGER — nouvelle disponibilité Club proche
+// - uniquement à la création du document
+// - exclut tous les comptes Club
+// ======================================================
+export const pushNearbyClubAvailabilityTrigger = onDocumentCreated(
+  {
+    region: "europe-west1",
+    document: "clubAvailabilities/{availabilityId}",
+  },
+  async (event) => {
+    const availabilityId = event.params.availabilityId;
+
+    try {
+      await pushNearbyForClubAvailabilityId(availabilityId);
+    } catch (error) {
+      logger.error("pushNearbyClubAvailabilityTrigger failed", {
+        availabilityId,
+        err: String(error?.message ?? error),
+      });
+    }
+
+    return null;
+  }
+);
+
+// ======================================================
 // TRIGGER — JOIN / LEAVE + notif urgente 3/4
 // ======================================================
 export const onMatchParticipantsChange = onDocumentUpdated(
@@ -1993,10 +2412,31 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 
     const m = event.data.after.data() || {};
     const lieu = asString(m.lieu || m.placeName || "le club");
-    const createurUid = asString(m.createurUid || m.creatorUid);
+
+    const createdByType = asString(m.createdByType || "player");
+
+    let ownerUid = "";
+
+    if (createdByType === "club") {
+      const clubId = asString(m.clubId || m.createdById);
+
+      if (clubId) {
+        const clubSnap = await db.collection("clubs").doc(clubId).get();
+
+        if (clubSnap.exists) {
+          ownerUid = asString(clubSnap.get("adminUid"));
+        }
+      }
+    } else {
+      ownerUid = asString(m.createurUid || m.creatorUid);
+    }
 
     const recipients = new Set(after);
-    if (createurUid) recipients.add(createurUid);
+
+    if (ownerUid) {
+      recipients.add(ownerUid);
+    }
+
     joined.forEach((u) => recipients.delete(u));
     left.forEach((u) => recipients.delete(u));
 
