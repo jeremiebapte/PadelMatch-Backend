@@ -1804,22 +1804,14 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
     const availabilitySnap = await tx.get(availabilityRef);
 
     if (!availabilitySnap.exists) {
-      throw new HttpsError(
-        "failed-precondition",
-        "AVAILABILITY_NOT_FOUND"
-      );
+      throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_FOUND");
     }
 
-    const availability = availabilitySnap.data() || {};
-    const availabilityStatus = asString(availability.status);
-
-    const availabilityParticipants =
-      Array.isArray(availability.participants)
+      const availabilityParticipants = Array.isArray(availability.participants)
         ? availability.participants
         : [];
 
-    const participantUids =
-      cleanUids(availabilityParticipants);
+      const participantUids = cleanUids(availabilityParticipants);
 
     if (availabilityStatus !== "open") {
       throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
@@ -1876,21 +1868,13 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
         participantUids: participantUids.filter((participantUid) => participantUid !== playerUid),
       };
 
-    tx.update(availabilityRef, {
-      status: "converted",
-      confirmedReservationId: reservationId,
-      reservedByUid: playerUid,
-      reservedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
     tx.update(reservationRef, {
       status: "confirmed",
       confirmedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    for (const pendingDoc of otherPendingReservationsSnap.docs) {
+      for (const pendingDoc of otherPendingReservationsSnap.docs) {
         if (pendingDoc.id === reservationId) continue;
 
         const pendingData = pendingDoc.data() || {};
@@ -1912,41 +1896,6 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
       }
 
   });
-
-  if (notifyPayload?.playerUid) {
-    try {
-      const playerTokens =
-        await tokensOf(notifyPayload.playerUid);
-
-      if (playerTokens.length) {
-        await send(playerTokens, {
-          title: "Réservation confirmée ✅",
-          body:
-            `Le club a accepté votre réservation pour ` +
-            `${notifyPayload.courtLabel}.`,
-          data: {
-            type: "club_reservation",
-            subtype: "confirmed",
-            reservationId,
-            availabilityId:
-              notifyPayload.availabilityId,
-            clubId: notifyPayload.clubId,
-          },
-        });
-      }
-    } catch (e) {
-      logger.warn(
-        "confirmClubReservation player notification failed",
-        {
-          reservationId,
-          playerUid: notifyPayload.playerUid,
-          availabilityId:
-            notifyPayload.availabilityId,
-          err: String(e?.message ?? e),
-        }
-      );
-    }
-  }
 
     if (notifyPayload?.participantUids?.length) {
       try {
@@ -2094,139 +2043,6 @@ if (notifyPayload?.playerUid) {
 
   return { ok: true, reservationId };
 });
-
-// ======================================================
-// CALLABLE — cancelClubReservation
-// - Le joueur peut annuler uniquement sa propre demande pending
-// ======================================================
-export const cancelClubReservation = onCall(
-  RUNTIME,
-  async (req) => {
-    const uid = assertAuth(req);
-
-    const reservationId =
-      asString(req.data?.reservationId);
-
-    if (!reservationId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "INVALID_ARGUMENT: reservationId missing"
-      );
-    }
-
-    const reservationRef =
-      db.collection("clubReservations")
-        .doc(reservationId);
-
-    let notifyPayload = null;
-
-    await db.runTransaction(async (tx) => {
-      const reservationSnap =
-        await tx.get(reservationRef);
-
-      if (!reservationSnap.exists) {
-        throw new HttpsError(
-          "not-found",
-          "RESERVATION_NOT_FOUND"
-        );
-      }
-
-      const reservation =
-        reservationSnap.data() || {};
-
-      const playerUid =
-        asString(reservation.playerUid);
-
-      if (!playerUid || playerUid !== uid) {
-        throw new HttpsError(
-          "permission-denied",
-          "NOT_RESERVATION_OWNER"
-        );
-      }
-
-      if (asString(reservation.status) !== "pending") {
-        throw new HttpsError(
-          "failed-precondition",
-          "RESERVATION_NOT_PENDING"
-        );
-      }
-
-      notifyPayload = {
-        clubId: asString(reservation.clubId),
-        playerName: asString(
-          reservation.playerName || "Un joueur"
-        ),
-        courtLabel: asString(
-          reservation.courtLabel || "ce terrain"
-        ),
-        availabilityId: asString(
-          reservation.availabilityId
-        ),
-      };
-
-      tx.update(reservationRef, {
-        status: "cancelled",
-        cancelledAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-    });
-
-    if (notifyPayload?.clubId) {
-      try {
-        const clubSnap =
-          await db.collection("clubs")
-            .doc(notifyPayload.clubId)
-            .get();
-
-        if (clubSnap.exists) {
-          const adminUid =
-            asString(clubSnap.get("adminUid"));
-
-          if (adminUid) {
-            const tokens =
-              await tokensOf(adminUid);
-
-            if (tokens.length) {
-              await send(tokens, {
-                title: "Demande annulée",
-                body:
-                  `${notifyPayload.playerName} a annulé ` +
-                  `sa demande pour ${notifyPayload.courtLabel}.`,
-                data: {
-                  type: "club_reservation",
-                  subtype: "cancelled",
-                  reservationId,
-                  availabilityId:
-                    notifyPayload.availabilityId,
-                  clubId: notifyPayload.clubId,
-                },
-              });
-            }
-          }
-        }
-      } catch (e) {
-        logger.warn(
-          "cancelClubReservation notification failed",
-          {
-            reservationId,
-            uid,
-            err: String(e?.message ?? e),
-          }
-        );
-      }
-    }
-
-    logger.info("cancelClubReservation ok", {
-      reservationId,
-      uid,
-    });
-
-    return {
-      ok: true,
-      reservationId,
-    };
-  }
-);
 
 // ======================================================
 // CALLABLE — joinMatch (SERVER SOURCE OF TRUTH)

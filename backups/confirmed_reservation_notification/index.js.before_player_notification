@@ -1913,41 +1913,6 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
 
   });
 
-  if (notifyPayload?.playerUid) {
-    try {
-      const playerTokens =
-        await tokensOf(notifyPayload.playerUid);
-
-      if (playerTokens.length) {
-        await send(playerTokens, {
-          title: "Réservation confirmée ✅",
-          body:
-            `Le club a accepté votre réservation pour ` +
-            `${notifyPayload.courtLabel}.`,
-          data: {
-            type: "club_reservation",
-            subtype: "confirmed",
-            reservationId,
-            availabilityId:
-              notifyPayload.availabilityId,
-            clubId: notifyPayload.clubId,
-          },
-        });
-      }
-    } catch (e) {
-      logger.warn(
-        "confirmClubReservation player notification failed",
-        {
-          reservationId,
-          playerUid: notifyPayload.playerUid,
-          availabilityId:
-            notifyPayload.availabilityId,
-          err: String(e?.message ?? e),
-        }
-      );
-    }
-  }
-
     if (notifyPayload?.participantUids?.length) {
       try {
         const tokenMap = await getTokens(notifyPayload.participantUids);
