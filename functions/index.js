@@ -1760,10 +1760,10 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
   }
 
   const reservationRef = db.collection("clubReservations").doc(reservationId);
-	
+
     let notifyPayload = null;
     let rejectedReservationPayloads = [];
-    
+
   await db.runTransaction(async (tx) => {
     const reservationSnap = await tx.get(reservationRef);
 
@@ -1812,7 +1812,7 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
         : [];
 
       const participantUids = cleanUids(availabilityParticipants);
-      
+
     if (availabilityStatus !== "open") {
       throw new HttpsError("failed-precondition", "AVAILABILITY_NOT_OPEN");
     }
@@ -1827,7 +1827,7 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
     if (!alreadyConfirmedSnap.empty) {
       throw new HttpsError("failed-precondition", "AVAILABILITY_ALREADY_RESERVED");
     }
-      
+
       const otherPendingReservationsSnap = await tx.get(
         db.collection("clubReservations")
           .where("availabilityId", "==", availabilityId)
@@ -1894,7 +1894,7 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
           });
         }
       }
-      
+
   });
 
     if (notifyPayload?.participantUids?.length) {
@@ -1922,7 +1922,7 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
         });
       }
     }
-    
+
     for (const rejectedPayload of rejectedReservationPayloads) {
       try {
         const tokens = await tokensOf(rejectedPayload.playerUid);
