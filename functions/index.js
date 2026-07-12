@@ -1005,6 +1005,10 @@ export const createMatch = onCall(RUNTIME, async (req) => {
         ? data.clubId
         : null;
 
+    let clubName = "";
+    let clubLogoUrl = "";
+    let clubVerified = false;
+
     const placeId = asString(data?.placeId);
     const lieu = asString(data?.lieu || data?.placeName || "Club");
     const dateHeure = normalizeDateMs(data?.dateHeure);
@@ -1030,8 +1034,52 @@ export const createMatch = onCall(RUNTIME, async (req) => {
       throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
     }
 
-    if (createdByType === "club" && !clubId) {
-      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: clubId missing");
+    if (createdByType === "club") {
+      if (!clubId) {
+        throw new HttpsError(
+          "invalid-argument",
+          "INVALID_ARGUMENT: clubId missing"
+        );
+      }
+
+      const clubSnap = await db
+        .collection("clubs")
+        .doc(clubId)
+        .get();
+
+      if (!clubSnap.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "CLUB_NOT_FOUND"
+        );
+      }
+
+      const clubData = clubSnap.data() || {};
+      const clubAdminUid = asString(clubData.adminUid);
+
+      if (clubAdminUid !== uid) {
+        throw new HttpsError(
+          "permission-denied",
+          "NOT_CLUB_OWNER"
+        );
+      }
+
+      const clubStatus = asString(clubData.status);
+
+      if (clubStatus !== "approved") {
+        throw new HttpsError(
+          "failed-precondition",
+          "CLUB_NOT_APPROVED"
+        );
+      }
+
+      clubName =
+        asString(clubData.name)
+        || asString(data.clubName)
+        || lieu;
+
+      clubLogoUrl = asString(clubData.logoUrl);
+      clubVerified = true;
     }
 
     const jm = joueursManquants === 1 || joueursManquants === 2 ? joueursManquants : null;
@@ -1094,17 +1142,33 @@ if (reservationOverlap) {
 
     let createurPseudo = "";
     let createurAvatar = "";
-    try {
-      const u = await db.collection("users").doc(uid).get();
-      if (u.exists) {
-        createurPseudo = asString(u.get("pseudo") || u.get("username"));
-        createurAvatar = asString(u.get("avatar"));
+
+    if (createdByType === "player") {
+      try {
+        const userSnap = await db
+          .collection("users")
+          .doc(uid)
+          .get();
+
+        if (userSnap.exists) {
+          createurPseudo = asString(
+            userSnap.get("pseudo")
+            || userSnap.get("username")
+          );
+
+          createurAvatar = asString(
+            userSnap.get("avatar")
+          );
+        }
+      } catch (e) {
+        logger.warn(
+          "createMatch: user profile read failed",
+          {
+            uid,
+            err: String(e?.message ?? e),
+          }
+        );
       }
-    } catch (e) {
-      logger.warn("createMatch: user profile read failed", {
-        uid,
-        err: String(e?.message ?? e),
-      });
     }
 
     const doc = {
@@ -1118,13 +1182,35 @@ if (reservationOverlap) {
       dateHeure,
       niveau,
       level: niveau,
+
+      // Identité technique du compte créateur.
       createurUid: uid,
       createdByType,
       createdById,
-      ...(clubId ? { clubId } : {}),
+
+      // Identité publique du Club.
+      ...(createdByType === "club"
+        ? {
+            clubId,
+            clubName,
+            clubVerified,
+            ...(clubLogoUrl
+              ? { clubLogoUrl }
+              : {}),
+          }
+        : {}),
+
       participants,
-      ...(createurPseudo ? { createurPseudo } : {}),
-      ...(createurAvatar ? { createurAvatar } : {}),
+
+      // Identité publique du joueur uniquement.
+      ...(createdByType === "player" && createurPseudo
+        ? { createurPseudo }
+        : {}),
+
+      ...(createdByType === "player" && createurAvatar
+        ? { createurAvatar }
+        : {}),
+
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     };
