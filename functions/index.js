@@ -22,6 +22,16 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import { getAuth } from "firebase-admin/auth";
+import {
+  buildArchiveClubPastItems,
+} from "./archiveClubPastItems.js";
+import {
+  buildGetClubAvailabilityDetail,
+} from "./clubAvailabilityDetail.js";
+import {
+  createClubActivityWriter,
+  buildGetClubActivityFeed,
+} from "./clubActivity.js";
 
 // ======================================================
 // RUNTIME COMMUN (Gen2 / Cloud Run quota friendly)
@@ -51,6 +61,40 @@ initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
 const authAdmin = getAuth();
+
+const writeClubActivityEvent =
+  createClubActivityWriter({
+    db,
+    FieldValue,
+    logger,
+  });
+
+
+async function recordClubActivity(payload) {
+  try {
+    await writeClubActivityEvent(payload);
+  } catch (error) {
+    logger.warn("recordClubActivity ignored failure", {
+      type: asString(payload?.type),
+      clubId: asString(payload?.clubId),
+      entityType: asString(payload?.entityType),
+      entityId: asString(payload?.entityId),
+      error: String(error?.message ?? error),
+    });
+  }
+}
+
+async function activityActorName(
+  uid,
+  fallback = "Joueur"
+) {
+  try {
+    const name = await pseudoOf(uid);
+    return asString(name) || fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
 
 // ======================================================
 // CONSTANTS
@@ -1404,6 +1448,25 @@ if (reservationOverlap) {
       joueursManquants: jm,
     });
 
+    if (createdByType === "club" && clubId) {
+      await recordClubActivity({
+        clubId,
+        type: "MATCH_CREATED",
+        displayType: "match",
+        entityType: "match",
+        entityId: ref.id,
+        actorUid: uid,
+        actorName: clubName || "Club",
+        title: "Nouveau match publié",
+        subtitle: `${lieu} · ${frDate(dateHeure)} à ${frTime(dateHeure)}`,
+        metadata: {
+          dateHeure,
+          niveau,
+          lieu,
+        },
+      });
+    }
+
     return { ok: true, matchId: ref.id };
   } catch (e) {
     if (e instanceof HttpsError) throw e;
@@ -1493,6 +1556,25 @@ export const createClubAvailability = onCall(RUNTIME, async (req) => {
     dateHeure,
     joinPlayers,
     reserveFullCourt,
+  });
+
+  await recordClubActivity({
+    clubId,
+    type: "AVAILABILITY_CREATED",
+    displayType: "availability",
+    entityType: "availability",
+    entityId: ref.id,
+    actorUid: uid,
+    actorName: clubName,
+    title: "Nouveau terrain disponible",
+    subtitle: `${courtLabel} · ${frDate(dateHeure)} à ${frTime(dateHeure)}`,
+    metadata: {
+      dateHeure,
+      durationMinutes,
+      courtLabel,
+      joinPlayers,
+      reserveFullCourt,
+    },
   });
 
   return { ok: true, availabilityId: ref.id };
@@ -1657,6 +1739,31 @@ if (notifyPayload?.clubId) {
     withFriend,
   });
 
+  if (notifyPayload?.clubId) {
+    const actorName =
+      await activityActorName(uid);
+
+    await recordClubActivity({
+      clubId: notifyPayload.clubId,
+      type: "PLAYER_JOINED_AVAILABILITY",
+      displayType: "success",
+      entityType: "availability",
+      entityId: availabilityId,
+      actorUid: uid,
+      actorName,
+      title: withFriend
+        ? `${actorName} a rejoint avec un ami`
+        : `${actorName} a rejoint le créneau`,
+      subtitle: notifyPayload.courtLabel,
+      metadata: {
+        withFriend,
+        friendName: withFriend
+          ? friendName
+          : "",
+      },
+    });
+  }
+
   return { ok: true, availabilityId };
 });
 
@@ -1753,6 +1860,24 @@ export const leaveClubAvailability = onCall(RUNTIME, async (req) => {
     uid,
   });
 
+  if (notifyPayload?.clubId) {
+    const actorName =
+      await activityActorName(uid);
+
+    await recordClubActivity({
+      clubId: notifyPayload.clubId,
+      type: "PLAYER_LEFT_AVAILABILITY",
+      displayType: "warning",
+      entityType: "availability",
+      entityId: availabilityId,
+      actorUid: uid,
+      actorName,
+      title: `${actorName} s’est désisté`,
+      subtitle: notifyPayload.courtLabel,
+      metadata: {},
+    });
+  }
+
   return { ok: true, availabilityId };
 });
 
@@ -1793,6 +1918,7 @@ export const closeClubAvailability = onCall(RUNTIME, async (req) => {
     const participants = Array.isArray(data.participants) ? data.participants : [];
 
     notifyPayload = {
+      clubId,
       courtLabel: asString(data.courtLabel || "votre terrain"),
       participantUids: cleanUids(participants),
     };
@@ -1830,6 +1956,21 @@ export const closeClubAvailability = onCall(RUNTIME, async (req) => {
     availabilityId,
     uid,
   });
+
+  if (notifyPayload?.clubId) {
+    await recordClubActivity({
+      clubId: notifyPayload.clubId,
+      type: "AVAILABILITY_CLOSED",
+      displayType: "warning",
+      entityType: "availability",
+      entityId: availabilityId,
+      actorUid: uid,
+      actorName: "Club",
+      title: "Terrain retiré",
+      subtitle: notifyPayload.courtLabel,
+      metadata: {},
+    });
+  }
 
   return { ok: true, availabilityId };
 });
@@ -1983,6 +2124,39 @@ logger.info("requestClubReservation ok", {
   availabilityId,
   uid,
 });
+
+  {
+    const clubId =
+      asString(availability.clubId);
+
+    const playerName =
+      asString(
+        user.pseudo ||
+        user.username ||
+        ""
+      ) || "Un joueur";
+
+    if (clubId) {
+      await recordClubActivity({
+        clubId,
+        type: "RESERVATION_REQUESTED",
+        displayType: "reservation",
+        entityType: "availability",
+        entityId: availabilityId,
+        actorUid: uid,
+        actorName: playerName,
+        title: "Nouvelle demande de réservation",
+        subtitle:
+          `${playerName} · ` +
+          `${asString(availability.courtLabel) || "Terrain"}`,
+        metadata: {
+          reservationId: ref.id,
+          playerUid: uid,
+          dateHeure,
+        },
+      });
+    }
+  }
 
   return {
     ok: true,
@@ -2248,6 +2422,32 @@ export const confirmClubReservation = onCall(RUNTIME, async (req) => {
     uid,
   });
 
+  if (notifyPayload?.clubId) {
+    const playerName =
+      await activityActorName(
+        notifyPayload.playerUid
+      );
+
+    await recordClubActivity({
+      clubId: notifyPayload.clubId,
+      type: "RESERVATION_CONFIRMED",
+      displayType: "success",
+      entityType: "availability",
+      entityId: notifyPayload.availabilityId,
+      actorUid: notifyPayload.playerUid,
+      actorName: playerName,
+      title: "Réservation confirmée",
+      subtitle:
+        `${playerName} · ` +
+        `${notifyPayload.courtLabel}`,
+      metadata: {
+        reservationId,
+        playerUid:
+          notifyPayload.playerUid,
+      },
+    });
+  }
+
   return { ok: true, reservationId };
 });
 
@@ -2333,6 +2533,34 @@ if (notifyPayload?.playerUid) {
     reservationId,
     uid,
   });
+
+  if (notifyPayload?.clubId) {
+    const playerName =
+      await activityActorName(
+        notifyPayload.playerUid
+      );
+
+    await recordClubActivity({
+      clubId: notifyPayload.clubId,
+      type: "RESERVATION_REJECTED",
+      displayType: "warning",
+      entityType: "availability",
+      entityId:
+        notifyPayload.availabilityId,
+      actorUid:
+        notifyPayload.playerUid,
+      actorName: playerName,
+      title: "Demande de réservation refusée",
+      subtitle:
+        `${playerName} · ` +
+        `${notifyPayload.courtLabel}`,
+      metadata: {
+        reservationId,
+        playerUid:
+          notifyPayload.playerUid,
+      },
+    });
+  }
 
   return { ok: true, reservationId };
 });
@@ -4351,3 +4579,42 @@ export const deleteUserAccount = onCall(RUNTIME, async (req) => {
   await authAdmin.deleteUser(targetUid);
   return { ok: true };
 });
+
+// ======================================================
+// CALLABLE — getClubAvailabilityDetail
+// ======================================================
+export const getClubAvailabilityDetail =
+  buildGetClubAvailabilityDetail({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    asString,
+    normalizeDateMs,
+  });
+
+// ======================================================
+// CALLABLE — archiveClubPastItems
+// ======================================================
+export const archiveClubPastItems =
+  buildArchiveClubPastItems({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    asString,
+    normalizeDateMs,
+  });
+
+// ======================================================
+// CALLABLE — getClubActivityFeed
+// ======================================================
+export const getClubActivityFeed =
+  buildGetClubActivityFeed({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+  });
+
