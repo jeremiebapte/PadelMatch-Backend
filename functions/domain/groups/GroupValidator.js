@@ -209,6 +209,263 @@ export function validateCreateGroupInput(input) {
   };
 }
 
+
+const GROUP_UPDATE_ALLOWED_FIELDS = new Set([
+  "name",
+  "description",
+  "type",
+  "discoverability",
+  "joinPolicy",
+  "city",
+  "countryCode",
+  "tags",
+  "levelMin",
+  "levelMax",
+  "latitude",
+  "longitude",
+  "defaultClubId",
+  "defaultClubNameSnapshot",
+  "preferredWeekdays",
+  "preferredTimeSlots",
+]);
+
+const GROUP_UPDATE_IMMUTABLE_FIELDS = new Set([
+  "groupId",
+  "ownerUid",
+  "status",
+  "settings",
+  "stats",
+  "health",
+  "schemaVersion",
+  "createdAt",
+  "updatedAt",
+  "createdBySource",
+  "linkJoinEnabled",
+  "inviteCodeVersion",
+  "archivedAt",
+  "deletedAt",
+  "deletedByUid",
+]);
+
+function assertValidUpdateFields(input) {
+  for (const field of Object.keys(input)) {
+    if (field === "groupId") continue;
+
+    if (GROUP_UPDATE_IMMUTABLE_FIELDS.has(field)) {
+      throw new GroupValidationError("IMMUTABLE_FIELD", field);
+    }
+
+    if (!GROUP_UPDATE_ALLOWED_FIELDS.has(field)) {
+      throw new GroupValidationError("UNKNOWN_FIELD", field);
+    }
+  }
+}
+
+export function validateUpdateGroupInput(input, currentGroup) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new GroupValidationError("INVALID_PAYLOAD", "payload");
+  }
+
+  if (!currentGroup || typeof currentGroup !== "object" || Array.isArray(currentGroup)) {
+    throw new GroupValidationError("INVALID_CURRENT_GROUP", "currentGroup");
+  }
+
+  assertValidUpdateFields(input);
+
+  const suppliedFields = Object.keys(input).filter((field) => field !== "groupId");
+  if (suppliedFields.length === 0) {
+    throw new GroupValidationError("EMPTY_UPDATE", "payload");
+  }
+
+  const result = {};
+
+  if (Object.prototype.hasOwnProperty.call(input, "name")) {
+    const name = requireString(
+      input.name,
+      "name",
+      GROUP_NAME_MIN_LENGTH,
+      GROUP_NAME_MAX_LENGTH
+    );
+
+    result.name = name;
+    result.nameNormalized = normalizeSearchText(name);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "description")) {
+    result.description =
+      optionalString(
+        input.description,
+        "description",
+        GROUP_DESCRIPTION_MAX_LENGTH
+      ) ?? "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "type")) {
+    result.type = requireEnum(input.type, "type", GroupType);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "discoverability")) {
+    result.discoverability = requireEnum(
+      input.discoverability,
+      "discoverability",
+      GroupDiscoverability
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "joinPolicy")) {
+    result.joinPolicy = requireEnum(
+      input.joinPolicy,
+      "joinPolicy",
+      GroupJoinPolicy
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "city")) {
+    result.city = optionalString(input.city, "city", 80) ?? "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "countryCode")) {
+    result.countryCode = requireString(
+      input.countryCode,
+      "countryCode",
+      2,
+      2
+    ).toUpperCase();
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "tags")) {
+    result.tags = normalizeTags(input.tags);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "levelMin")) {
+    result.levelMin = requireLevel(input.levelMin, "levelMin");
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "levelMax")) {
+    result.levelMax = requireLevel(input.levelMax, "levelMax");
+  }
+
+  const hasLatitude = Object.prototype.hasOwnProperty.call(input, "latitude");
+  const hasLongitude = Object.prototype.hasOwnProperty.call(input, "longitude");
+
+  if (hasLatitude !== hasLongitude) {
+    throw new GroupValidationError("INCOMPLETE_LOCATION", "location");
+  }
+
+  if (hasLatitude && hasLongitude) {
+    if (
+      input.latitude === null &&
+      input.longitude === null
+    ) {
+      result.latitude = null;
+      result.longitude = null;
+    } else {
+      result.latitude = optionalCoordinate(
+        input.latitude,
+        "latitude",
+        -90,
+        90
+      );
+      result.longitude = optionalCoordinate(
+        input.longitude,
+        "longitude",
+        -180,
+        180
+      );
+
+      if (
+        result.latitude === undefined ||
+        result.longitude === undefined
+      ) {
+        throw new GroupValidationError("INCOMPLETE_LOCATION", "location");
+      }
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "defaultClubId")) {
+    const defaultClubId = optionalString(
+      input.defaultClubId,
+      "defaultClubId",
+      128
+    );
+
+    result.defaultClubId = defaultClubId ?? null;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      input,
+      "defaultClubNameSnapshot"
+    )
+  ) {
+    const snapshot = optionalString(
+      input.defaultClubNameSnapshot,
+      "defaultClubNameSnapshot",
+      120
+    );
+
+    result.defaultClubNameSnapshot = snapshot ?? null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "preferredWeekdays")) {
+    result.preferredWeekdays =
+      validateWeekdays(input.preferredWeekdays) ?? [];
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "preferredTimeSlots")) {
+    result.preferredTimeSlots =
+      validateTimeSlots(input.preferredTimeSlots) ?? [];
+  }
+
+  const mergedGroup = {
+    ...currentGroup,
+    ...result,
+  };
+
+  const finalLevelMin = mergedGroup.levelMin;
+  const finalLevelMax = mergedGroup.levelMax;
+
+  if (
+    !Number.isInteger(finalLevelMin) ||
+    !Number.isInteger(finalLevelMax) ||
+    finalLevelMax < finalLevelMin
+  ) {
+    throw new GroupValidationError("INVALID_LEVEL_RANGE", "levelMax");
+  }
+
+  const finalLatitude =
+    result.latitude === null ? undefined : mergedGroup.latitude;
+  const finalLongitude =
+    result.longitude === null ? undefined : mergedGroup.longitude;
+
+  if ((finalLatitude === undefined) !== (finalLongitude === undefined)) {
+    throw new GroupValidationError("INCOMPLETE_LOCATION", "location");
+  }
+
+  if (
+    mergedGroup.discoverability === GroupDiscoverability.SEARCHABLE &&
+    !asTrimmedString(mergedGroup.city) &&
+    (finalLatitude === undefined || finalLongitude === undefined)
+  ) {
+    throw new GroupValidationError(
+      "SEARCHABLE_GROUP_REQUIRES_LOCATION",
+      "discoverability"
+    );
+  }
+
+  if (
+    mergedGroup.type === GroupType.CLUB_COMMUNITY &&
+    !asTrimmedString(mergedGroup.defaultClubId)
+  ) {
+    throw new GroupValidationError(
+      "CLUB_COMMUNITY_REQUIRES_CLUB",
+      "defaultClubId"
+    );
+  }
+
+  return result;
+}
+
 export function validateGroupId(value) {
   const groupId = asTrimmedString(value);
   if (!groupId || groupId.length > 128 || groupId.includes("/")) {

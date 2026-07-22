@@ -33,6 +33,14 @@ import {
   buildGetClubActivityFeed,
 } from "./clubActivity.js";
 
+import {
+  buildCreateGroup,
+} from "./createGroup.js";
+
+import {
+  buildUpdateGroup,
+} from "./updateGroup.js";
+
 // ======================================================
 // RUNTIME COMMUN (Gen2 / Cloud Run quota friendly)
 // - IMPORTANT: utile uniquement pour onCall / onSchedule.
@@ -4617,4 +4625,22 @@ export const getClubActivityFeed =
     runtime: RUNTIME,
     db,
   });
+export const createGroup =
+  buildCreateGroup({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
 
+export const updateGroup =
+  buildUpdateGroup({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
