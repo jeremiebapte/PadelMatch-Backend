@@ -33,7 +33,9 @@ service cloud.firestore {
           'pseudo','pseudoLower',
           'avatar','niveau','notificationsEnabled',
           'nom','prenom','photoUrl','lat','lng','email',
-          'createdAt','fcmToken','fcmPlatform','fcmUpdatedAt'
+          'createdAt','updatedAt',
+          'fcmToken','fcmPlatform','fcmUpdatedAt',
+          'onboardingCompleted','onboardingCompletedAt'
         ])
         && (
           !request.resource.data.diff(resource.data).changedKeys().hasAny(['createdAt'])
@@ -50,12 +52,32 @@ service cloud.firestore {
 
     match /usernames/{pseudoLower} {
       allow get, list: if true;
+
       allow create: if signedIn()
         && !exists(/databases/$(database)/documents/usernames/$(pseudoLower))
-        && request.resource.data.keys().hasOnly(['uid','createdAt'])
+        && request.resource.data.keys()
+             .hasOnly(['uid','createdAt','updatedAt'])
         && request.resource.data.uid == uid();
-      allow update: if false;
-      allow delete: if signedIn() && resource.data.uid == uid();
+
+      allow update: if signedIn()
+        && resource.data.uid == uid()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data)
+             .changedKeys()
+             .hasOnly(['updatedAt']);
+
+      allow delete: if signedIn()
+        && resource.data.uid == uid();
+    }
+
+    match /userAnalytics/{userId} {
+      allow get: if signedIn() && userId == uid();
+
+      allow create, update: if signedIn()
+        && userId == uid()
+        && request.resource.data.uid == uid();
+
+      allow list, delete: if false;
     }
 
     /* ---------- clubAvailabilities ---------- */
