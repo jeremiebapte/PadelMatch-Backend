@@ -1197,6 +1197,73 @@ async function pushNearbyForMatchId(matchId) {
 // ======================================================
 // CALLABLE — createMatch (SERVER SOURCE OF TRUTH)
 // ======================================================
+
+// ======================================================
+// MARK: - PSEUDO AVAILABILITY
+// Vérification publique utilisée pendant l'onboarding.
+// La réservation définitive reste atomique lors de la
+// création du profil.
+// ======================================================
+
+export const checkPseudoAvailability = onCall(
+  RUNTIME,
+  async (req) => {
+    const pseudoRaw =
+      typeof req.data?.pseudo === "string"
+        ? req.data.pseudo
+        : "";
+
+    const pseudo = pseudoRaw
+      .trim()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+    if (pseudo.length < 3) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Le pseudo doit contenir au moins 3 caractères."
+      );
+    }
+
+    if (pseudo.length > 24) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Le pseudo ne peut pas dépasser 24 caractères."
+      );
+    }
+
+    if (!/^[a-z0-9._-]+$/.test(pseudo)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Le pseudo contient des caractères non autorisés."
+      );
+    }
+
+    try {
+      const usernameSnapshot = await db
+        .collection("usernames")
+        .doc(pseudo)
+        .get();
+
+      return {
+        available: !usernameSnapshot.exists,
+        normalizedPseudo: pseudo,
+      };
+    } catch (error) {
+      console.error(
+        "checkPseudoAvailability failed",
+        error
+      );
+
+      throw new HttpsError(
+        "internal",
+        "Impossible de vérifier ce pseudo pour le moment."
+      );
+    }
+  }
+);
+
 export const createMatch = onCall(RUNTIME, async (req) => {
   try {
     const uid = assertAuth(req);
