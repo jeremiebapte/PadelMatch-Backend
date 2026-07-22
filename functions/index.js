@@ -4543,6 +4543,436 @@ export const rejectPadimaClub = onCall(RUNTIME, async (req) => {
 });
 
 
+
+// ======================================================
+// FOLLOW CLUB — joueur
+// ======================================================
+
+function normalizeFollowClubText(
+  value,
+  maxLength
+) {
+  return asString(value).slice(0, maxLength);
+}
+
+function normalizeFollowClubCoordinate(
+  value,
+  minimum,
+  maximum
+) {
+  const number = Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number < minimum ||
+    number > maximum
+  ) {
+    return null;
+  }
+
+  return number;
+}
+
+function assertValidGooglePlaceId(placeId) {
+  if (!placeId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "PLACE_ID_REQUIRED"
+    );
+  }
+
+  if (
+    placeId.length > 255 ||
+    placeId.includes("/")
+  ) {
+    throw new HttpsError(
+      "invalid-argument",
+      "INVALID_PLACE_ID"
+    );
+  }
+}
+
+async function resolvePadimaClubForPlace({
+  requestedClubId,
+  placeId,
+}) {
+  if (requestedClubId) {
+    const requestedClubSnap = await db
+      .collection("clubs")
+      .doc(requestedClubId)
+      .get();
+
+    if (requestedClubSnap.exists) {
+      const requestedClub =
+        requestedClubSnap.data() || {};
+
+      const requestedPlaceId = asString(
+        requestedClub.placeId
+      );
+
+      if (
+        requestedPlaceId === placeId &&
+        asString(requestedClub.status) === "approved"
+      ) {
+        return {
+          clubId: requestedClubSnap.id,
+          clubName: asString(
+            requestedClub.name
+          ),
+        };
+      }
+    }
+  }
+
+  const matchingClubsSnap = await db
+    .collection("clubs")
+    .where("placeId", "==", placeId)
+    .limit(10)
+    .get();
+
+  const matchingApprovedClub =
+    matchingClubsSnap.docs.find((document) => {
+      const club = document.data() || {};
+
+      return asString(club.status) === "approved";
+    });
+
+  if (!matchingApprovedClub) {
+    return {
+      clubId: "",
+      clubName: "",
+    };
+  }
+
+  const matchingClub =
+    matchingApprovedClub.data() || {};
+
+  return {
+    clubId: matchingApprovedClub.id,
+    clubName: asString(
+      matchingClub.name
+    ),
+  };
+}
+
+export const followClub = onCall(
+  RUNTIME,
+  async (req) => {
+    const uid = assertAuth(req);
+
+    const placeId = asString(
+      req.data?.placeId
+    );
+
+    assertValidGooglePlaceId(placeId);
+
+    const requestedClubId = asString(
+      req.data?.clubId
+    );
+
+    const name = normalizeFollowClubText(
+      req.data?.name,
+      160
+    );
+
+    const formattedAddress =
+      normalizeFollowClubText(
+        req.data?.formattedAddress,
+        500
+      );
+
+    const latitude =
+      normalizeFollowClubCoordinate(
+        req.data?.latitude,
+        -90,
+        90
+      );
+
+    const longitude =
+      normalizeFollowClubCoordinate(
+        req.data?.longitude,
+        -180,
+        180
+      );
+
+    const source =
+      normalizeFollowClubText(
+        req.data?.source,
+        60
+      ) || "unknown";
+
+    if (!name) {
+      throw new HttpsError(
+        "invalid-argument",
+        "CLUB_NAME_REQUIRED"
+      );
+    }
+
+    if (
+      latitude === null ||
+      longitude === null
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_CLUB_COORDINATES"
+      );
+    }
+
+    const resolvedPadimaClub =
+      await resolvePadimaClubForPlace({
+        requestedClubId,
+        placeId,
+      });
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const favoriteClubRef = userRef
+      .collection("favoriteClubs")
+      .doc(placeId);
+
+    const interestEventRef = db
+      .collection("clubInterestEvents")
+      .doc();
+
+    const result = await db.runTransaction(
+      async (tx) => {
+        const [
+          userSnap,
+          favoriteClubSnap,
+        ] = await Promise.all([
+          tx.get(userRef),
+          tx.get(favoriteClubRef),
+        ]);
+
+        if (!userSnap.exists) {
+          throw new HttpsError(
+            "failed-precondition",
+            "USER_PROFILE_NOT_FOUND"
+          );
+        }
+
+        const alreadyFollowing =
+          favoriteClubSnap.exists;
+
+        const favoriteClubPayload = {
+          placeId,
+          clubId:
+            resolvedPadimaClub.clubId || null,
+          name:
+            resolvedPadimaClub.clubName ||
+            name,
+          formattedAddress,
+          latitude,
+          longitude,
+          source,
+
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        };
+
+        if (!alreadyFollowing) {
+          favoriteClubPayload.followedAt =
+            FieldValue.serverTimestamp();
+        }
+
+        tx.set(
+          favoriteClubRef,
+          favoriteClubPayload,
+          { merge: true }
+        );
+
+        tx.set(
+          userRef,
+          {
+            favoriteClubIds:
+              FieldValue.arrayUnion(placeId),
+            favoriteClubsUpdatedAt:
+              FieldValue.serverTimestamp(),
+            updatedAt:
+              FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        if (!alreadyFollowing) {
+          tx.set(
+            interestEventRef,
+            {
+              action: "follow",
+              userId: uid,
+              placeId,
+              clubId:
+                resolvedPadimaClub.clubId ||
+                null,
+              clubName:
+                resolvedPadimaClub.clubName ||
+                name,
+              source,
+              createdAt:
+                FieldValue.serverTimestamp(),
+            }
+          );
+        }
+
+        return {
+          alreadyFollowing,
+        };
+      }
+    );
+
+    logger.info("followClub ok", {
+      uid,
+      placeId,
+      clubId:
+        resolvedPadimaClub.clubId || "",
+      source,
+      alreadyFollowing:
+        result.alreadyFollowing,
+    });
+
+    return {
+      ok: true,
+      placeId,
+      clubId:
+        resolvedPadimaClub.clubId || null,
+      alreadyFollowing:
+        result.alreadyFollowing,
+    };
+  }
+);
+
+// ======================================================
+// UNFOLLOW CLUB — joueur
+// ======================================================
+
+export const unfollowClub = onCall(
+  RUNTIME,
+  async (req) => {
+    const uid = assertAuth(req);
+
+    const placeId = asString(
+      req.data?.placeId
+    );
+
+    assertValidGooglePlaceId(placeId);
+
+    const source =
+      normalizeFollowClubText(
+        req.data?.source,
+        60
+      ) || "unknown";
+
+    const userRef = db
+      .collection("users")
+      .doc(uid);
+
+    const favoriteClubRef = userRef
+      .collection("favoriteClubs")
+      .doc(placeId);
+
+    const interestEventRef = db
+      .collection("clubInterestEvents")
+      .doc();
+
+    const result = await db.runTransaction(
+      async (tx) => {
+        const [
+          userSnap,
+          favoriteClubSnap,
+        ] = await Promise.all([
+          tx.get(userRef),
+          tx.get(favoriteClubRef),
+        ]);
+
+        if (!userSnap.exists) {
+          throw new HttpsError(
+            "failed-precondition",
+            "USER_PROFILE_NOT_FOUND"
+          );
+        }
+
+        const wasFollowing =
+          favoriteClubSnap.exists;
+
+        let clubId = "";
+        let clubName = "";
+
+        if (favoriteClubSnap.exists) {
+          const favoriteClub =
+            favoriteClubSnap.data() || {};
+
+          clubId = asString(
+            favoriteClub.clubId
+          );
+
+          clubName = asString(
+            favoriteClub.name
+          );
+        }
+
+        tx.delete(favoriteClubRef);
+
+        tx.set(
+          userRef,
+          {
+            favoriteClubIds:
+              FieldValue.arrayRemove(placeId),
+            favoriteClubsUpdatedAt:
+              FieldValue.serverTimestamp(),
+            updatedAt:
+              FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        if (wasFollowing) {
+          tx.set(
+            interestEventRef,
+            {
+              action: "unfollow",
+              userId: uid,
+              placeId,
+              clubId: clubId || null,
+              clubName: clubName || null,
+              source,
+              createdAt:
+                FieldValue.serverTimestamp(),
+            }
+          );
+        }
+
+        return {
+          wasFollowing,
+          clubId,
+        };
+      }
+    );
+
+    logger.info("unfollowClub ok", {
+      uid,
+      placeId,
+      clubId: result.clubId || "",
+      source,
+      wasFollowing:
+        result.wasFollowing,
+    });
+
+    return {
+      ok: true,
+      placeId,
+      clubId:
+        result.clubId || null,
+      wasFollowing:
+        result.wasFollowing,
+    };
+  }
+);
+
+
+
+
 // ======================================================
 // BROADCAST — admin (compat prod)
 // ======================================================
