@@ -22,6 +22,26 @@ service cloud.firestore {
         && userDoc().data.clubId == clubId;
     }
 
+    function groupMembershipId(groupId, userId) {
+      return groupId + '_' + userId;
+    }
+
+    function hasActiveGroupMembership(groupId) {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        )
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.userId == uid()
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.groupId == groupId
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.status == 'active';
+    }
+
     match /users/{userId} {
       allow get, list: if signedIn();
       allow create: if signedIn()
@@ -78,6 +98,28 @@ service cloud.firestore {
         && request.resource.data.uid == uid();
 
       allow list, delete: if false;
+    }
+
+    /* ---------- Groups ---------- */
+
+    match /groupMemberships/{membershipId} {
+      allow get, list: if signedIn()
+        && resource.data.userId == uid();
+
+      allow create, update, delete: if false;
+    }
+
+    match /groups/{groupId} {
+      allow get, list: if signedIn()
+        && (
+          hasActiveGroupMembership(groupId)
+          || (
+            resource.data.status == 'active'
+            && resource.data.discoverability == 'searchable'
+          )
+        );
+
+      allow create, update, delete: if false;
     }
 
     /* ---------- clubAvailabilities ---------- */

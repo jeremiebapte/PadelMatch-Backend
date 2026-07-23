@@ -227,6 +227,7 @@ const GROUP_UPDATE_ALLOWED_FIELDS = new Set([
   "defaultClubNameSnapshot",
   "preferredWeekdays",
   "preferredTimeSlots",
+  "imageUrl",
 ]);
 
 const GROUP_UPDATE_IMMUTABLE_FIELDS = new Set([
@@ -298,6 +299,36 @@ export function validateUpdateGroupInput(input, currentGroup) {
         "description",
         GROUP_DESCRIPTION_MAX_LENGTH
       ) ?? "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, "imageUrl")) {
+    const imageUrl = optionalString(
+      input.imageUrl,
+      "imageUrl",
+      2048
+    );
+
+    if (!imageUrl) {
+      throw new GroupValidationError(
+        "INVALID_IMAGE_URL",
+        "imageUrl"
+      );
+    }
+
+    try {
+      const parsedImageUrl = new URL(imageUrl);
+
+      if (parsedImageUrl.protocol !== "https:") {
+        throw new Error("INVALID_PROTOCOL");
+      }
+    } catch {
+      throw new GroupValidationError(
+        "INVALID_IMAGE_URL",
+        "imageUrl"
+      );
+    }
+
+    result.imageUrl = imageUrl;
   }
 
   if (Object.prototype.hasOwnProperty.call(input, "type")) {

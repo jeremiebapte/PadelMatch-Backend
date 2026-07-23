@@ -7,8 +7,8 @@ service firebase.storage {
       allow read: if true;
 
       allow write: if request.auth != null
-        && exists(/databases/(default)/documents/clubs/$(clubId))
-        && get(/databases/(default)/documents/clubs/$(clubId)).data.adminUid == request.auth.uid
+        && firestore.exists(/databases/(default)/documents/clubs/$(clubId))
+        && firestore.get(/databases/(default)/documents/clubs/$(clubId)).data.adminUid == request.auth.uid
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
@@ -17,6 +17,20 @@ service firebase.storage {
       allow read: if true;
 
       allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /groups/{groupId}/avatar.jpg {
+      allow read: if true;
+
+      allow write: if request.auth != null
+        && firestore.exists(
+          /databases/(default)/documents/groups/$(groupId)
+        )
+        && firestore.get(
+          /databases/(default)/documents/groups/$(groupId)
+        ).data.ownerUid == request.auth.uid
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
