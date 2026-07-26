@@ -38,8 +38,17 @@ import {
 } from "./createGroup.js";
 
 import {
+  buildCreateMatch,
+} from "./createMatch.js";
+
+import {
   buildUpdateGroup,
 } from "./updateGroup.js";
+
+
+import {
+  buildSyncGroupMembershipSnapshots,
+} from "./syncGroupMembershipSnapshots.js";
 
 // ======================================================
 // RUNTIME COMMUN (Gen2 / Cloud Run quota friendly)
@@ -1264,296 +1273,23 @@ export const checkPseudoAvailability = onCall(
   }
 );
 
-export const createMatch = onCall(RUNTIME, async (req) => {
-  try {
-    const uid = assertAuth(req);
-    const data = req.data ?? {};
-
-    const createdByType = data?.createdByType === "club" ? "club" : "player";
-    const createdById =
-      typeof data?.createdById === "string" && data.createdById.length > 0
-        ? data.createdById
-        : uid;
-
-    const clubId =
-      typeof data?.clubId === "string" && data.clubId.length > 0
-        ? data.clubId
-        : null;
-
-    let clubName = "";
-    let clubLogoUrl = "";
-    let clubVerified = false;
-
-    const placeId = asString(data?.placeId);
-    const lieu = asString(data?.lieu || data?.placeName || "Club");
-    const dateHeure = normalizeDateMs(data?.dateHeure);
-
-    const lat = asNumber(data?.lat) ?? asNumber(data?.latitude);
-    const lng = asNumber(data?.lng) ?? asNumber(data?.longitude);
-
-    const niveauRaw = data?.niveau ?? data?.level;
-    const niveau = typeof niveauRaw === "number" ? Math.round(niveauRaw) : Number(niveauRaw);
-
-    const descRaw = asString(data?.description);
-    const desc = descRaw ? descRaw.trim() : "";
-
-    const joueursManquants = data?.joueursManquants;
-
-    if (!placeId) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: placeId missing");
-    if (!dateHeure) throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: dateHeure missing");
-    if (dateHeure <= Date.now()) throw new HttpsError("failed-precondition", "MATCH_PAST");
-    if (lat === null || lng === null) {
-      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: lat/lng missing");
-    }
-    if (!(Number.isFinite(niveau) && niveau >= 1 && niveau <= 10)) {
-      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: niveau invalid");
-    }
-
-    if (createdByType === "club") {
-      if (!clubId) {
-        throw new HttpsError(
-          "invalid-argument",
-          "INVALID_ARGUMENT: clubId missing"
-        );
-      }
-
-      const clubSnap = await db
-        .collection("clubs")
-        .doc(clubId)
-        .get();
-
-      if (!clubSnap.exists) {
-        throw new HttpsError(
-          "failed-precondition",
-          "CLUB_NOT_FOUND"
-        );
-      }
-
-      const clubData = clubSnap.data() || {};
-      const clubAdminUid = asString(clubData.adminUid);
-
-      if (clubAdminUid !== uid) {
-        throw new HttpsError(
-          "permission-denied",
-          "NOT_CLUB_OWNER"
-        );
-      }
-
-      const clubStatus = asString(clubData.status);
-
-      if (clubStatus !== "approved") {
-        throw new HttpsError(
-          "failed-precondition",
-          "CLUB_NOT_APPROVED"
-        );
-      }
-
-      clubName =
-        asString(clubData.name)
-        || asString(data.clubName)
-        || lieu;
-
-      clubLogoUrl = asString(clubData.logoUrl);
-      clubVerified = true;
-    }
-
-    const jm = joueursManquants === 1 || joueursManquants === 2 ? joueursManquants : null;
-    if (jm === null) {
-      throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: joueursManquants must be 1 or 2");
-    }
-
-    if (createdByType === "player") {
-      let overlap = false;
-      try {
-        overlap = await hasTimeOverlap(uid, dateHeure);
-      } catch (e) {
-        logger.error("createMatch hasTimeOverlap crash", {
-          uid,
-          dateHeure,
-          err: String(e?.message ?? e),
-        });
-        throw new HttpsError("internal", "TIME_OVERLAP_INTERNAL");
-      }
-      if (overlap) throw new HttpsError("failed-precondition", "TIME_OVERLAP");
-	let reservationOverlap = false;
-try {
-  reservationOverlap = await hasReservationOverlap(uid, dateHeure);
-} catch (e) {
-  logger.error("createMatch hasReservationOverlap crash", {
-    uid,
-    dateHeure,
-    err: String(e?.message ?? e),
+export const createMatch =
+  buildCreateMatch({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+    hasTimeOverlap,
+    hasReservationOverlap,
+    hasPlaceConflictKm1,
+    recordClubActivity,
+    frDate,
+    frTime,
   });
-  throw new HttpsError("internal", "RESERVATION_OVERLAP_INTERNAL");
-}
 
-if (reservationOverlap) {
-  throw new HttpsError("failed-precondition", "RESERVATION_TIME_OVERLAP");
-}
 
-      let placeConflict = false;
-      try {
-        placeConflict = await hasPlaceConflictKm1(lat, lng, dateHeure);
-      } catch (e) {
-        logger.error("createMatch hasPlaceConflictKm1 crash", {
-          uid,
-          placeId,
-          lat,
-          lng,
-          dateHeure,
-          err: String(e?.message ?? e),
-        });
-        throw new HttpsError("internal", "PLACE_CONFLICT_INTERNAL");
-      }
-      if (placeConflict) throw new HttpsError("failed-precondition", "PLACE_CONFLICT");
-    }
-
-    const participants = [uid];
-    if (jm === 1) {
-      participants.push(`ami_de_${uid}:Joueur 1`, `ami_de_${uid}:Joueur 2`);
-    } else {
-      participants.push(`ami_de_${uid}:Joueur 1`);
-    }
-
-    let createurPseudo = "";
-    let createurAvatar = "";
-
-    if (createdByType === "player") {
-      try {
-        const userSnap = await db
-          .collection("users")
-          .doc(uid)
-          .get();
-
-        if (userSnap.exists) {
-          createurPseudo = asString(
-            userSnap.get("pseudo")
-            || userSnap.get("username")
-          );
-
-          createurAvatar = asString(
-            userSnap.get("avatar")
-          );
-        }
-      } catch (e) {
-        logger.warn(
-          "createMatch: user profile read failed",
-          {
-            uid,
-            err: String(e?.message ?? e),
-          }
-        );
-      }
-    }
-
-    const doc = {
-      lieu,
-      placeName: lieu,
-      placeId,
-      latitude: lat,
-      longitude: lng,
-      lat,
-      lng,
-      dateHeure,
-      niveau,
-      level: niveau,
-
-      // Identité technique du compte créateur.
-      createurUid: uid,
-      createdByType,
-      createdById,
-
-      // Identité publique du Club.
-      ...(createdByType === "club"
-        ? {
-            clubId,
-            clubName,
-            clubVerified,
-            ...(clubLogoUrl
-              ? { clubLogoUrl }
-              : {}),
-          }
-        : {}),
-
-      participants,
-
-      // Identité publique du joueur uniquement.
-      ...(createdByType === "player" && createurPseudo
-        ? { createurPseudo }
-        : {}),
-
-      ...(createdByType === "player" && createurAvatar
-        ? { createurAvatar }
-        : {}),
-
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-
-    if (desc.length > 0) {
-      doc.description = desc;
-    }
-
-    let ref;
-    try {
-      ref = await db.collection("matches").add(doc);
-    } catch (e) {
-      logger.error("createMatch Firestore add failed", {
-        uid,
-        createdByType,
-        createdById,
-        clubId,
-        placeId,
-        dateHeure,
-        niveau,
-        err: String(e?.message ?? e),
-      });
-      throw new HttpsError("internal", "FIRESTORE_WRITE_FAILED");
-    }
-
-    logger.info("createMatch ok", {
-      matchId: ref.id,
-      uid,
-      createdByType,
-      createdById,
-      clubId,
-      placeId,
-      dateHeure,
-      niveau,
-      joueursManquants: jm,
-    });
-
-    if (createdByType === "club" && clubId) {
-      await recordClubActivity({
-        clubId,
-        type: "MATCH_CREATED",
-        displayType: "match",
-        entityType: "match",
-        entityId: ref.id,
-        actorUid: uid,
-        actorName: clubName || "Club",
-        title: "Nouveau match publié",
-        subtitle: `${lieu} · ${frDate(dateHeure)} à ${frTime(dateHeure)}`,
-        metadata: {
-          dateHeure,
-          niveau,
-          lieu,
-        },
-      });
-    }
-
-    return { ok: true, matchId: ref.id };
-  } catch (e) {
-    if (e instanceof HttpsError) throw e;
-
-    logger.error("createMatch UNHANDLED INTERNAL", {
-      err: String(e?.message ?? e),
-      dataKeys: Object.keys(req.data ?? {}),
-      uid: req.auth?.uid ?? null,
-    });
-    throw new HttpsError("internal", "CREATE_MATCH_INTERNAL");
-  }
-});
 // ======================================================
 // CALLABLE — createClubAvailability
 // ======================================================
@@ -5141,3 +4877,12 @@ export const updateGroup =
     FieldValue,
     logger,
   });
+
+export const syncGroupMembershipSnapshots =
+  buildSyncGroupMembershipSnapshots({
+    onDocumentUpdated,
+    db,
+    FieldValue,
+    logger,
+  });
+

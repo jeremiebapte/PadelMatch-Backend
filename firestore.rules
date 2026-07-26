@@ -104,7 +104,15 @@ service cloud.firestore {
 
     match /groupMemberships/{membershipId} {
       allow get, list: if signedIn()
-        && resource.data.userId == uid();
+        && (
+          resource.data.userId == uid()
+          || (
+            resource.data.status == 'active'
+            && hasActiveGroupMembership(
+              resource.data.groupId
+            )
+          )
+        );
 
       allow create, update, delete: if false;
     }
