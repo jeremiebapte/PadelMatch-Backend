@@ -38,6 +38,11 @@ import {
 } from "./createGroup.js";
 
 
+
+import {
+  buildCreateGroupInviteLink,
+} from "./createGroupInviteLink.js";
+
 import {
   buildRevokeGroupInvite,
 } from "./revokeGroupInvite.js";
@@ -4876,6 +4881,16 @@ export const getClubActivityFeed =
     db,
   });
 
+
+
+export const createGroupInviteLink =
+  buildCreateGroupInviteLink({
+    onCall,
+    HttpsError,
+    runtime:RUNTIME,
+    db,
+    logger,
+  });
 
 export const revokeGroupInvite =
   buildRevokeGroupInvite({
