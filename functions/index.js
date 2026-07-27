@@ -37,6 +37,11 @@ import {
   buildCreateGroup,
 } from "./createGroup.js";
 
+
+import {
+  buildRevokeGroupInvite,
+} from "./revokeGroupInvite.js";
+
 import {
   buildDeclineGroupInvite,
 } from "./declineGroupInvite.js";
@@ -4869,6 +4874,16 @@ export const getClubActivityFeed =
     HttpsError,
     runtime: RUNTIME,
     db,
+  });
+
+
+export const revokeGroupInvite =
+  buildRevokeGroupInvite({
+    onCall,
+    HttpsError,
+    runtime:RUNTIME,
+    db,
+    logger,
   });
 
 export const declineGroupInvite =
