@@ -38,6 +38,10 @@ import {
 } from "./createGroup.js";
 
 import {
+  buildCreateGroupInvite,
+} from "./createGroupInvite.js";
+
+import {
   buildCreateMatch,
 } from "./createMatch.js";
 
@@ -4858,6 +4862,16 @@ export const getClubActivityFeed =
     runtime: RUNTIME,
     db,
   });
+
+export const createGroupInvite =
+  buildCreateGroupInvite({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    logger,
+  });
+
 export const createGroup =
   buildCreateGroup({
     onCall,
