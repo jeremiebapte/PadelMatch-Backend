@@ -166,3 +166,91 @@ test("validateCreateLinkInviteInput rejects excessive maxUses", () => {
     (error) => error.code === "MAX_USES_TOO_HIGH"
   );
 });
+
+test(
+  "buildInviteStatusUpdate keeps reusable links pending before maxUses",
+  () => {
+    const now =
+      new Date("2026-07-27T12:00:00.000Z");
+
+    const result =
+      buildInviteStatusUpdate({
+        invite: {
+          status:
+            GroupInviteStatus.PENDING,
+          type:
+            GroupInviteType.LINK,
+          useCount: 2,
+          maxUses: 5,
+        },
+        nextStatus:
+          GroupInviteStatus.ACCEPTED,
+        actorUid: "user-123",
+        now,
+      });
+
+    assert.equal(
+      result.status,
+      GroupInviteStatus.PENDING
+    );
+
+    assert.equal(
+      result.useCount,
+      3
+    );
+
+    assert.equal(
+      result.lastAcceptedByUid,
+      "user-123"
+    );
+
+    assert.equal(
+      result.lastAcceptedAt,
+      now
+    );
+
+    assert.equal(
+      result.acceptedAt,
+      undefined
+    );
+  }
+);
+
+test(
+  "buildInviteStatusUpdate closes reusable links at maxUses",
+  () => {
+    const now =
+      new Date("2026-07-27T12:00:00.000Z");
+
+    const result =
+      buildInviteStatusUpdate({
+        invite: {
+          status:
+            GroupInviteStatus.PENDING,
+          type:
+            GroupInviteType.LINK,
+          useCount: 4,
+          maxUses: 5,
+        },
+        nextStatus:
+          GroupInviteStatus.ACCEPTED,
+        actorUid: "user-123",
+        now,
+      });
+
+    assert.equal(
+      result.status,
+      GroupInviteStatus.ACCEPTED
+    );
+
+    assert.equal(
+      result.useCount,
+      5
+    );
+
+    assert.equal(
+      result.acceptedAt,
+      now
+    );
+  }
+);

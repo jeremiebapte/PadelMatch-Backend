@@ -185,8 +185,41 @@ export function buildInviteStatusUpdate({
   };
 
   if (nextStatus === GroupInviteStatus.ACCEPTED) {
-    update.acceptedAt = timestamp;
-    update.useCount = (Number.isInteger(invite.useCount) ? invite.useCount : 0) + 1;
+    const currentUseCount =
+      Number.isInteger(invite.useCount)
+        ? invite.useCount
+        : 0;
+
+    const nextUseCount =
+      currentUseCount + 1;
+
+    const isReusableInvite =
+      invite.type === GroupInviteType.LINK ||
+      invite.type === GroupInviteType.QR;
+
+    const usageLimitReached =
+      Number.isInteger(invite.maxUses) &&
+      nextUseCount >= invite.maxUses;
+
+    update.useCount = nextUseCount;
+    update.lastAcceptedAt = timestamp;
+
+    if (
+      isReusableInvite &&
+      !usageLimitReached
+    ) {
+      update.status =
+        GroupInviteStatus.PENDING;
+      update.lastAcceptedByUid =
+        validateUserId(
+          actorUid,
+          "actorUid"
+        );
+    } else {
+      update.status =
+        GroupInviteStatus.ACCEPTED;
+      update.acceptedAt = timestamp;
+    }
   }
 
   if (nextStatus === GroupInviteStatus.DECLINED) {
