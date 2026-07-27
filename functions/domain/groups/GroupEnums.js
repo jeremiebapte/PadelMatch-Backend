@@ -48,12 +48,32 @@ export const GroupMembershipSource = Object.freeze({
   MIGRATION: "migration",
 });
 
+export const GroupInviteType = Object.freeze({
+  DIRECT_USER: "direct_user",
+  LINK: "link",
+  QR: "qr",
+});
+
 export const GroupInviteStatus = Object.freeze({
   PENDING: "pending",
   ACCEPTED: "accepted",
   DECLINED: "declined",
   CANCELLED: "cancelled",
+  REVOKED: "revoked",
   EXPIRED: "expired",
+});
+
+export const GroupInviteSource = Object.freeze({
+  INTERNAL_SEARCH: "internal_search",
+  SHARE_SHEET: "share_sheet",
+  COPY_LINK: "copy_link",
+  QR: "qr",
+  WHATSAPP: "whatsapp",
+  SMS: "sms",
+  EMAIL: "email",
+  INSTAGRAM: "instagram",
+  FACEBOOK: "facebook",
+  OTHER: "other",
 });
 
 export const GroupJoinRequestStatus = Object.freeze({
@@ -75,6 +95,11 @@ export const GroupActivityType = Object.freeze({
   GROUP_UPDATED: "group_updated",
   GROUP_ARCHIVED: "group_archived",
   MEMBER_INVITED: "member_invited",
+  INVITE_LINK_CREATED: "invite_link_created",
+  INVITE_LINK_REVOKED: "invite_link_revoked",
+  INVITE_ACCEPTED: "invite_accepted",
+  INVITE_DECLINED: "invite_declined",
+  INVITE_EXPIRED: "invite_expired",
   MEMBER_JOIN_REQUESTED: "member_join_requested",
   MEMBER_REQUEST_APPROVED: "member_request_approved",
   MEMBER_REQUEST_REJECTED: "member_request_rejected",

@@ -1,6 +1,7 @@
 export const GROUP_SCHEMA_VERSION = 1;
 export const GROUP_ACTIVITY_SCHEMA_VERSION = 1;
 export const GROUP_HEALTH_VERSION = 1;
+export const GROUP_INVITE_SCHEMA_VERSION = 1;
 
 export const GROUP_NAME_MIN_LENGTH = 3;
 export const GROUP_NAME_MAX_LENGTH = 60;
@@ -12,6 +13,9 @@ export const GROUP_LEVEL_MAX = 10;
 
 export const GROUP_INVITE_EXPIRATION_DAYS = 30;
 export const GROUP_JOIN_REQUEST_EXPIRATION_DAYS = 30;
+export const GROUP_DEFAULT_LINK_MAX_USES = 100;
+export const GROUP_MAX_ACTIVE_LINKS = 5;
+export const GROUP_INVITE_TOKEN_BYTES = 32;
 
 export const GROUP_DEFAULT_SETTINGS = Object.freeze({
   canMembersCreateMatches: true,
