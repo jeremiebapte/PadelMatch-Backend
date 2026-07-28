@@ -145,11 +145,16 @@ export function assertInviteUsable(invite, now, acceptingUserId) {
     throw new GroupInviteError("INVITE_NOT_PENDING");
   }
 
-  if (!(invite.expiresAt instanceof Date)) {
+  const expirationDate =
+    invite.expiresAt instanceof Date
+      ? invite.expiresAt
+      : invite.expiresAt?.toDate?.();
+
+  if (!expirationDate) {
     throw new GroupInviteError("INVALID_INVITE_EXPIRATION");
   }
 
-  if (invite.expiresAt.getTime() <= timestamp.getTime()) {
+  if (expirationDate.getTime() <= timestamp.getTime()) {
     throw new GroupInviteError("INVITE_EXPIRED");
   }
 

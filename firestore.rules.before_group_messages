@@ -245,141 +245,28 @@ service cloud.firestore {
     }
 
     match /messages/{messageId} {
-
-      /*
-       * Deux contextes sont conservés dans la collection commune messages :
-       *
-       * - conversation de match :
-       *   matchId + senderUid + receiverUid
-       *
-       * - conversation de groupe :
-       *   conversationType == "group" + groupId + senderUid
-       */
-
-      function isGroupMessage(data) {
-        return data.groupId is string
-          && (
-            !('conversationType' in data)
-            || data.conversationType == 'group'
-          );
-      }
-
-      function isMatchMessage(data) {
-        return data.matchId is string
-          && data.receiverUid is string
-          && (
-            !('conversationType' in data)
-            || data.conversationType == 'match'
-          );
-      }
-
-      function hasValidMessageTimestamp(data) {
-        return data.timestamp is timestamp
-          || data.timestamp is int
-          || data.timestamp is float;
-      }
-
-      function canReadGroupMessage(data) {
-        return isGroupMessage(data)
-          && hasActiveGroupMembership(data.groupId);
-      }
-
-      function canReadMatchMessage(data) {
-        return isMatchMessage(data)
-          && (
-            data.senderUid == uid()
-            || data.receiverUid == uid()
-          );
-      }
-
-      /*
-       * Lecture :
-       * - les participants conservent l'accès aux messages privés ;
-       * - tous les membres actifs peuvent lire les messages de leur groupe.
-       */
       allow get, list: if signedIn()
+        && (resource.data.senderUid == uid() || resource.data.receiverUid == uid());
+      allow create: if signedIn()
+        && request.resource.data.senderUid == uid()
+        && request.resource.data.receiverUid is string
+        && request.resource.data.matchId is string
+        && request.resource.data.text is string
         && (
-          canReadGroupMessage(resource.data)
-          || canReadMatchMessage(resource.data)
+             request.resource.data.timestamp is timestamp
+          || request.resource.data.timestamp is int
+          || request.resource.data.timestamp is float
         );
-
-      /*
-       * Création d'un message de match.
-       *
-       * conversationType reste facultatif pour conserver la compatibilité
-       * avec les anciens clients et les anciens documents.
-       */
-      allow create: if signedIn()
-        && request.resource.data.senderUid == uid()
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && hasValidMessageTimestamp(request.resource.data)
-        && isMatchMessage(request.resource.data);
-
-      /*
-       * Création d'un message de groupe.
-       *
-       * Seul un membre actif du groupe peut publier.
-       */
-      allow create: if signedIn()
-        && request.resource.data.senderUid == uid()
-        && request.resource.data.conversationType == 'group'
-        && request.resource.data.groupId is string
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && hasValidMessageTimestamp(request.resource.data)
-        && hasActiveGroupMembership(
-          request.resource.data.groupId
-        );
-
-      /*
-       * Modification :
-       * - uniquement l'auteur ;
-       * - uniquement le texte et les métadonnées d'édition ;
-       * - le contexte, l'auteur et la date d'origine restent immuables.
-       */
       allow update: if signedIn()
         && resource.data.senderUid == uid()
-        && request.resource.data.senderUid == resource.data.senderUid
-        && request.resource.data.diff(resource.data)
-             .changedKeys()
-             .hasOnly([
-               'text',
-               'edited',
-               'editedAt'
-             ])
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && (
-          canReadMatchMessage(resource.data)
-          || canReadGroupMessage(resource.data)
-        );
-
-      /*
-       * Suppression :
-       * - l'auteur peut supprimer son message ;
-       * - pour les anciens messages privés, le destinataire conserve
-       *   également le droit historique de suppression ;
-       * - un message de groupe nécessite une appartenance active.
-       */
+        && request.resource.data.senderUid   == resource.data.senderUid
+        && request.resource.data.receiverUid == resource.data.receiverUid
+        && request.resource.data.matchId     == resource.data.matchId
+        && request.resource.data.timestamp   == resource.data.timestamp
+        && request.resource.data.diff(resource.data).changedKeys()
+             .hasOnly(['text','edited','editedAt']);
       allow delete: if signedIn()
-        && (
-          (
-            isGroupMessage(resource.data)
-            && resource.data.senderUid == uid()
-            && hasActiveGroupMembership(
-              resource.data.groupId
-            )
-          )
-          ||
-          (
-            isMatchMessage(resource.data)
-            && (
-              resource.data.senderUid == uid()
-              || resource.data.receiverUid == uid()
-            )
-          )
-        );
+        && (resource.data.senderUid == uid() || resource.data.receiverUid == uid());
     }
 
     match /userCounters/{userId} {

@@ -279,11 +279,29 @@ export function buildAcceptGroupInvite({
                 inviteSnapshot.data() ??
                 {};
 
+              logger?.info?.(
+                "acceptGroupInvite invite debug",
+                {
+                  inviteId: inviteSnapshot.id,
+                  groupId: invite.groupId,
+                  status: invite.status,
+                  type: invite.type,
+                  hasTokenHash: !!invite.tokenHash,
+                }
+              );
+
               const inviteRef =
                 inviteSnapshot.ref;
 
               const groupId =
                 invite.groupId;
+
+              logger?.info?.(
+                "acceptGroupInvite group lookup",
+                {
+                  groupId,
+                }
+              );
 
               const groupRef =
                 db

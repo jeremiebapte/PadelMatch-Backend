@@ -40,6 +40,10 @@ import {
 
 
 import {
+  buildGetGroupInvitePreview,
+} from "./getGroupInvitePreview.js";
+
+import {
   buildCreateGroupInviteLink,
 } from "./createGroupInviteLink.js";
 
@@ -4882,6 +4886,15 @@ export const getClubActivityFeed =
   });
 
 
+
+export const getGroupInvitePreview =
+  buildGetGroupInvitePreview({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    logger,
+  });
 
 export const createGroupInviteLink =
   buildCreateGroupInviteLink({

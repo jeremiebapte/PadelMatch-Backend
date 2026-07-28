@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.bapoto.padelmatch",
+      "sha256_cert_fingerprints": [
+        "1B:7D:53:60:BC:45:FA:4F:85:AD:3E:0B:EA:AE:1B:15:16:59:EB:D0:45:6E:CD:62:2B:23:D6:AA:88:C7:E1:2A"
+      ]
+    }
+  }
+]

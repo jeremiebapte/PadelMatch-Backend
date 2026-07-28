@@ -8,6 +8,7 @@ import {
   GroupValidationError,
   assertCanInvitePlayers,
   validateCreateLinkInviteInput,
+  generateInviteToken,
 } from "./domain/groups/index.js";
 
 function mapError(error, HttpsError) {
@@ -65,13 +66,30 @@ export function buildCreateGroupInviteLink({
               `${input.groupId}_${uid}`
             );
 
+          const inviterUserRef =
+            db.collection("users").doc(uid);
+
           const [
             groupSnap,
             membershipSnap,
+            inviterUserSnapshot,
           ] = await Promise.all([
             tx.get(groupRef),
             tx.get(membershipRef),
+            tx.get(inviterUserRef),
           ]);
+
+          logger?.info?.(
+            "createGroupInviteLink debug",
+            {
+              groupId: input.groupId,
+              uid,
+              groupExists: groupSnap.exists,
+              membershipExists: membershipSnap.exists,
+              groupData: groupSnap.data(),
+              membershipData: membershipSnap.data(),
+            }
+          );
 
           assertCanInvitePlayers(
             groupSnap.data(),
@@ -80,15 +98,23 @@ export function buildCreateGroupInviteLink({
 
           const now = new Date();
 
+          const inviteRef =
+            db.collection("groupInvites").doc();
+
+          const token =
+            generateInviteToken();
+
           const invite =
             buildReusableGroupInvite({
-              ...input,
+              inviteId: inviteRef.id,
+              input,
               inviterUid: uid,
+              group: groupSnap.data(),
+              inviterUser:
+                inviterUserSnapshot.data() ?? {},
               now,
+              token,
             });
-
-          const inviteRef =
-            db.collection("groupInvites").doc(invite.id);
 
           tx.set(inviteRef, invite);
 
@@ -105,10 +131,13 @@ export function buildCreateGroupInviteLink({
               `invite_created:${invite.id}`,
           }, { transaction: tx });
 
+          const inviteUrl =
+            `https://padelmatch-32186.web.app/group/invite?token=${token}`;
+
           return {
-            inviteId: invite.id,
-            inviteUrl: invite.inviteUrl,
-            token: invite.token,
+            inviteId: inviteRef.id,
+            inviteUrl,
+            token,
           };
         });
 
