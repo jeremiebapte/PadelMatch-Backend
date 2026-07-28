@@ -1,89 +1,492 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  >
+  <meta name="theme-color" content="#0b5d3b">
 
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/12.5.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/12.5.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/12.5.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+  <title>Invitation à rejoindre un groupe — Padima</title>
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
+  <meta
+    name="description"
+    content="Vous avez été invité(e) à rejoindre un groupe sur Padima."
+  >
+
+  <style>
+    :root {
+      color-scheme: light;
+      font-family:
+        Inter,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+      --padima-green: #0b5d3b;
+      --padima-green-dark: #07452d;
+      --padima-green-soft: #eaf5ef;
+      --text-primary: #17211c;
+      --text-secondary: #65716a;
+      --background: #f4f7f5;
+      --surface: #ffffff;
+      --border: #dfe8e2;
+      --danger: #b42318;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+      margin: 0;
+    }
+
+    body {
+      background:
+        radial-gradient(
+          circle at top,
+          #dff2e8 0,
+          var(--background) 42%,
+          var(--background) 100%
+        );
+      color: var(--text-primary);
+    }
+
+    button,
+    a {
+      font: inherit;
+    }
+
+    .page {
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding:
+        max(24px, env(safe-area-inset-top))
+        20px
+        max(24px, env(safe-area-inset-bottom));
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 480px;
+      padding: 32px 24px 26px;
+
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(223, 232, 226, 0.9);
+      border-radius: 28px;
+
+      box-shadow:
+        0 24px 70px rgba(11, 93, 59, 0.13),
+        0 4px 18px rgba(23, 33, 28, 0.06);
+
+      text-align: center;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+
+      margin-bottom: 26px;
+
+      color: var(--padima-green);
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.7px;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+
+      display: grid;
+      place-items: center;
+
+      background: var(--padima-green);
+      color: white;
+      font-size: 22px;
+      font-weight: 900;
+
+      box-shadow: 0 9px 24px rgba(11, 93, 59, 0.24);
+    }
+
+    .icon {
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 22px;
+
+      display: grid;
+      place-items: center;
+
+      border-radius: 27px;
+      background: var(--padima-green-soft);
+      color: var(--padima-green);
+      font-size: 38px;
+    }
+
+    h1 {
+      margin: 0;
+
+      font-size: clamp(28px, 8vw, 38px);
+      line-height: 1.08;
+      letter-spacing: -1.1px;
+    }
+
+    .subtitle {
+      margin: 16px auto 0;
+      max-width: 370px;
+
+      color: var(--text-secondary);
+      font-size: 17px;
+      line-height: 1.55;
+    }
+
+    .actions {
+      margin-top: 30px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .button {
+      min-height: 56px;
+      padding: 15px 18px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+
+      border: 0;
+      border-radius: 17px;
+
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 750;
+      transition:
+        transform 120ms ease,
+        background-color 120ms ease;
+    }
+
+    .button:active {
+      transform: scale(0.985);
+    }
+
+    .button-primary {
+      background: var(--padima-green);
+      color: white;
+      box-shadow: 0 12px 26px rgba(11, 93, 59, 0.24);
+    }
+
+    .button-primary:hover {
+      background: var(--padima-green-dark);
+    }
+
+    .button-secondary {
+      background: var(--padima-green-soft);
+      color: var(--padima-green);
+    }
+
+    .stores {
+      margin-top: 16px;
+
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .store {
+      min-height: 52px;
+      padding: 12px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: #101512;
+      color: white;
+      border-radius: 15px;
+
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .store-disabled {
+      opacity: 0.45;
+      cursor: default;
+      pointer-events: none;
+    }
+
+    .help {
+      margin: 22px 0 0;
+
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .error {
+      display: none;
+
+      margin-top: 24px;
+      padding: 15px;
+
+      background: #fff1f0;
+      border: 1px solid #fecdca;
+      border-radius: 15px;
+
+      color: var(--danger);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .home-content {
+      display: none;
+    }
+
+    @media (max-width: 390px) {
+      .page {
+        padding-left: 14px;
+        padding-right: 14px;
       }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
-    </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+      .card {
+        padding: 28px 18px 22px;
+        border-radius: 24px;
+      }
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
+      .stores {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="page">
+    <section class="card">
+      <div class="brand">
+        <span class="brand-mark">P</span>
+        <span>Padima</span>
+      </div>
+
+      <div id="inviteContent">
+        <div class="icon" aria-hidden="true">🎾</div>
+
+        <h1>Rejoins le groupe sur Padima</h1>
+
+        <p class="subtitle">
+          Un membre Padima t’invite à rejoindre son groupe pour organiser
+          plus facilement vos prochains matchs.
+        </p>
+
+        <div class="actions">
+          <button
+            id="openAppButton"
+            class="button button-primary"
+            type="button"
+          >
+            Ouvrir dans Padima
+          </button>
+
+          <button
+            id="copyButton"
+            class="button button-secondary"
+            type="button"
+          >
+            Copier le lien d’invitation
+          </button>
+        </div>
+
+        <div class="stores">
+          <a
+            id="playStoreButton"
+            class="store"
+            href="https://play.google.com/store/apps/details?id=com.bapoto.padelmatch"
+            rel="noopener noreferrer"
+          >
+            Google Play
+          </a>
+
+          <a
+            id="appStoreButton"
+            class="store store-disabled"
+            href="#"
+            aria-disabled="true"
+          >
+            App Store
+          </a>
+        </div>
+
+        <p class="help">
+          L’invitation sera conservée pendant l’ouverture ou l’installation
+          de l’application.
+        </p>
+
+        <div id="errorMessage" class="error"></div>
+      </div>
+
+      <div id="homeContent" class="home-content">
+        <div class="icon" aria-hidden="true">🎾</div>
+
+        <h1>Joue. Organise. Progresse.</h1>
+
+        <p class="subtitle">
+          Padima aide les joueurs à trouver et organiser leurs matchs de padel.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const ANDROID_PACKAGE = "com.bapoto.padelmatch";
+      const INVITE_PATH = "/group/invite";
+
+      /*
+       * À renseigner lorsque l’identifiant public App Store de Padima
+       * sera confirmé.
+       *
+       * Exemple :
+       * https://apps.apple.com/fr/app/padima/id1234567890
+       */
+      const APP_STORE_URL = "";
+
+      const currentUrl = new URL(window.location.href);
+      const token = (currentUrl.searchParams.get("token") || "").trim();
+
+      const inviteContent = document.getElementById("inviteContent");
+      const homeContent = document.getElementById("homeContent");
+      const errorMessage = document.getElementById("errorMessage");
+
+      const openAppButton = document.getElementById("openAppButton");
+      const copyButton = document.getElementById("copyButton");
+      const playStoreButton = document.getElementById("playStoreButton");
+      const appStoreButton = document.getElementById("appStoreButton");
+
+      const isInviteRoute =
+        window.location.pathname === INVITE_PATH ||
+        window.location.pathname.startsWith(`${INVITE_PATH}/`);
+
+      if (!isInviteRoute) {
+        inviteContent.style.display = "none";
+        homeContent.style.display = "block";
+        return;
+      }
+
+      if (!token) {
+        showError(
+          "Ce lien d’invitation est incomplet. Demande à la personne qui t’a invité(e) de générer un nouveau lien."
+        );
+
+        openAppButton.disabled = true;
+        copyButton.disabled = true;
+        openAppButton.style.opacity = "0.5";
+        copyButton.style.opacity = "0.5";
+        return;
+      }
+
+      configureStoreLinks();
+      configureActions();
+
+      function configureStoreLinks() {
+        const encodedFallback = encodeURIComponent(
+          playStoreButton.href
+        );
+
+        playStoreButton.dataset.intentFallback = encodedFallback;
+
+        if (APP_STORE_URL) {
+          appStoreButton.href = APP_STORE_URL;
+          appStoreButton.classList.remove("store-disabled");
+          appStoreButton.removeAttribute("aria-disabled");
         }
-      });
-    </script>
-  </body>
+      }
+
+      function configureActions() {
+        openAppButton.addEventListener("click", openApplication);
+        copyButton.addEventListener("click", copyInvitationLink);
+      }
+
+      function openApplication() {
+        const userAgent = navigator.userAgent || "";
+        const isAndroid = /Android/i.test(userAgent);
+        const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+
+        if (isAndroid) {
+          const fallbackUrl =
+            `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
+
+          const intentUrl =
+            `intent://padelmatch-32186.web.app/group/invite` +
+            `?token=${encodeURIComponent(token)}` +
+            `#Intent;scheme=https;` +
+            `package=${ANDROID_PACKAGE};` +
+            `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};` +
+            `end`;
+
+          window.location.href = intentUrl;
+          return;
+        }
+
+        if (isIOS) {
+          /*
+           * Le lien HTTPS courant est le Universal Link Padima.
+           * Le domaine est déjà associé à l’application via
+           * apple-app-site-association.
+           */
+          window.location.href =
+            `${window.location.origin}${INVITE_PATH}` +
+            `?token=${encodeURIComponent(token)}`;
+
+          if (APP_STORE_URL) {
+            window.setTimeout(() => {
+              window.location.href = APP_STORE_URL;
+            }, 1800);
+          }
+
+          return;
+        }
+
+        window.location.href =
+          `${window.location.origin}${INVITE_PATH}` +
+          `?token=${encodeURIComponent(token)}`;
+      }
+
+      async function copyInvitationLink() {
+        try {
+          await navigator.clipboard.writeText(currentUrl.toString());
+
+          const originalText = copyButton.textContent;
+          copyButton.textContent = "Lien copié";
+
+          window.setTimeout(() => {
+            copyButton.textContent = originalText;
+          }, 1800);
+        } catch (error) {
+          showError(
+            "Impossible de copier automatiquement le lien. Utilise le menu de partage de ton navigateur."
+          );
+        }
+      }
+
+      function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.style.display = "block";
+      }
+    })();
+  </script>
+</body>
 </html>

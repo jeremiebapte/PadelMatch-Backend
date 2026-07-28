@@ -1,9 +1,11 @@
 {
   "applinks": {
+    "apps": [],
     "details": [
       {
-        "appID": "YGF679M2U3.com.bapoto.PadelMatch",
+        "appID": "WADRG42PZF.com.bapoto.PadelMatch",
         "paths": [
+          "/group/invite",
           "/group/invite/*"
         ]
       }

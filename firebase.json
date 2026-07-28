@@ -65,6 +65,10 @@
         "destination": "/privacy.html"
       },
       {
+        "source": "/group/invite",
+        "destination": "/index.html"
+      },
+      {
         "source": "/group/invite/**",
         "destination": "/index.html"
       }
