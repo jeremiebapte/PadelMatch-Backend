@@ -71,6 +71,10 @@ import {
   buildUpdateGroup,
 } from "./updateGroup.js";
 
+import {
+  buildManageGroupMember,
+} from "./manageGroupMember.js";
+
 
 import {
   buildSyncGroupMembershipSnapshots,
@@ -4954,6 +4958,16 @@ export const createGroup =
 
 export const updateGroup =
   buildUpdateGroup({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
+
+export const manageGroupMember =
+  buildManageGroupMember({
     onCall,
     HttpsError,
     runtime: RUNTIME,
