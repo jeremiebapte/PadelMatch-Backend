@@ -150,6 +150,8 @@ export function buildCreateGroupInvite({
   runtime,
   db,
   logger,
+  tokensOf,
+  sendVisibleHybrid,
 }) {
   if (typeof onCall !== "function") {
     throw new TypeError(
@@ -168,6 +170,21 @@ export function buildCreateGroupInvite({
   if (!db) {
     throw new TypeError(
       "DB_REQUIRED"
+    );
+  }
+
+  if (typeof tokensOf !== "function") {
+    throw new TypeError(
+      "TOKENS_OF_REQUIRED"
+    );
+  }
+
+  if (
+    typeof sendVisibleHybrid !==
+    "function"
+  ) {
+    throw new TypeError(
+      "SEND_VISIBLE_HYBRID_REQUIRED"
     );
   }
 
@@ -464,9 +481,73 @@ export function buildCreateGroupInvite({
                 targetUserId,
                 expiresAt:
                   invite.expiresAt,
+                groupName:
+                  asTrimmedString(
+                    group.name ??
+                      group.title
+                  ) || "votre groupe",
+                inviterPseudo:
+                  asTrimmedString(
+                    inviterUser.pseudo
+                  ) || "Un joueur",
               };
             }
           );
+
+        try {
+          const tokens =
+            await tokensOf(
+              result.targetUserId
+            );
+
+          await sendVisibleHybrid(
+            tokens,
+            {
+              title:
+                "Invitation à rejoindre un groupe",
+              body:
+                `${result.inviterPseudo} vous a invité à rejoindre « ${result.groupName} ».`,
+              data: {
+                type: "group",
+                subtype: "invite",
+                inviteId:
+                  result.inviteId,
+                groupId:
+                  result.groupId,
+                groupName:
+                  result.groupName,
+                inviterUid:
+                  uid,
+              },
+            }
+          );
+
+          logger?.info?.(
+            "createGroupInvite notification processed",
+            {
+              inviteId:
+                result.inviteId,
+              targetUserId:
+                result.targetUserId,
+              tokenCount:
+                tokens.length,
+            }
+          );
+        } catch (notificationError) {
+          logger?.warn?.(
+            "createGroupInvite notification ignored failure",
+            {
+              inviteId:
+                result.inviteId,
+              targetUserId:
+                result.targetUserId,
+              error: String(
+                notificationError?.message ??
+                  notificationError
+              ),
+            }
+          );
+        }
 
         logger?.info?.(
           "createGroupInvite ok",

@@ -4944,6 +4944,8 @@ export const createGroupInvite =
     runtime: RUNTIME,
     db,
     logger,
+    tokensOf,
+    sendVisibleHybrid,
   });
 
 export const createGroup =
