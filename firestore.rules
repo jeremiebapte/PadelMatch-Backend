@@ -42,6 +42,25 @@ service cloud.firestore {
         ).data.status == 'active';
     }
 
+    function canManageGroupJoinRequests(groupId) {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        )
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.userId == uid()
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.groupId == groupId
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.status == 'active'
+        && get(
+          /databases/$(database)/documents/groupMemberships/$(groupMembershipId(groupId, uid()))
+        ).data.role in ['owner', 'admin'];
+    }
+
     match /users/{userId} {
       allow get, list: if signedIn();
       allow create: if signedIn()
@@ -111,6 +130,28 @@ service cloud.firestore {
             && hasActiveGroupMembership(
               resource.data.groupId
             )
+          )
+        );
+
+      allow create, update, delete: if false;
+    }
+
+    match /groupJoinRequests/{requestId} {
+      /*
+       * Lecture autorisée :
+       * - au joueur ayant créé la demande ;
+       * - aux Owner/Admin actifs du groupe concerné.
+       *
+       * Toute création ou résolution passe exclusivement
+       * par les Cloud Functions.
+       */
+      allow get, list: if signedIn()
+        && resource.data.groupId is string
+        && resource.data.requesterUid is string
+        && (
+          resource.data.requesterUid == uid()
+          || canManageGroupJoinRequests(
+            resource.data.groupId
           )
         );
 

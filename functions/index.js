@@ -64,6 +64,22 @@ import {
 } from "./createGroupInvite.js";
 
 import {
+  buildCreateGroupJoinRequest,
+} from "./createGroupJoinRequest.js";
+
+import {
+  buildApproveGroupJoinRequest,
+} from "./approveGroupJoinRequest.js";
+
+import {
+  buildRejectGroupJoinRequest,
+} from "./rejectGroupJoinRequest.js";
+
+import {
+  buildCancelGroupJoinRequest,
+} from "./cancelGroupJoinRequest.js";
+
+import {
   buildCreateMatch,
 } from "./createMatch.js";
 
@@ -4947,6 +4963,57 @@ export const createGroupInvite =
     tokensOf,
     sendVisibleHybrid,
   });
+
+
+export const createGroupJoinRequest =
+  buildCreateGroupJoinRequest({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+    tokensOf,
+    sendVisibleHybrid,
+  });
+
+
+export const approveGroupJoinRequest =
+  buildApproveGroupJoinRequest({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+    tokensOf,
+    sendVisibleHybrid,
+  });
+
+
+export const rejectGroupJoinRequest =
+  buildRejectGroupJoinRequest({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+    tokensOf,
+    sendVisibleHybrid,
+  });
+
+
+export const cancelGroupJoinRequest =
+  buildCancelGroupJoinRequest({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
+
 
 export const createGroup =
   buildCreateGroup({

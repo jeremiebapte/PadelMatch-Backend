@@ -8,6 +8,8 @@ export * from "./GroupActivityRecorder.js";
 export * from "./GroupMembershipService.js";
 
 export * from "./GroupInviteService.js";
+export * from "./GroupJoinRequestService.js";
+export * from "./GroupJoinRequestValidator.js";
 export * from "./GroupInviteValidator.js";
 export * from "./GroupInviteToken.js";
 export * from "./GroupInviteSnapshotBuilder.js";
