@@ -545,6 +545,18 @@ export function buildManageGroupMember({
                 membershipUpdates
               );
 
+              if (
+                action === GroupMemberAction.REMOVE_FROM_GROUP
+              ) {
+                transaction.update(
+                  groupRef,
+                  {
+                    "stats.memberCount":
+                      FieldValue.increment(-1),
+                  }
+                );
+              }
+
               const actorPseudo =
                 asTrimmedString(
                   actorUser.pseudo
