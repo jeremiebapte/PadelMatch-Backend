@@ -11,6 +11,7 @@
 // ======================================================
 
 import {
+
   GroupActivityType,
   GroupActivityVisibility,
   GroupPermissionError,
@@ -18,6 +19,7 @@ import {
   createGroupActivityRecorder,
   membershipDocumentId,
   validateGroupId,
+  recordMatchCreated,
 } from "./domain/groups/index.js";
 
 
@@ -687,115 +689,6 @@ function buildMatchDocument({
 }
 
 
-async function recordGroupMatchCreated({
-  groupId,
-  matchId,
-  uid,
-  input,
-  creatorProfile,
-  recordGroupActivity,
-  db,
-  FieldValue,
-  logger,
-}) {
-  if (!groupId) {
-    return;
-  }
-
-  const now =
-    FieldValue.serverTimestamp();
-
-  try {
-    await Promise.all([
-      recordGroupActivity({
-        groupId,
-
-        type:
-          GroupActivityType
-            .MATCH_CREATED,
-
-        visibility:
-          GroupActivityVisibility
-            .MEMBERS,
-
-        actorUid: uid,
-
-        createdAt: now,
-
-        matchId,
-
-        ...(creatorProfile.pseudo
-          ? {
-              actorPseudoSnapshot:
-                creatorProfile.pseudo,
-            }
-          : {}),
-
-        ...(creatorProfile.avatar
-          ? {
-              actorAvatarSnapshot:
-                creatorProfile.avatar,
-            }
-          : {}),
-
-        matchPlaceNameSnapshot:
-          input.lieu,
-
-        matchDateSnapshot:
-          input.dateHeure,
-
-        metadata: {
-          niveau:
-            input.niveau,
-
-          placeId:
-            input.placeId,
-
-          createdByType:
-            input.createdByType,
-        },
-
-        deduplicationKey:
-          `match_created:${matchId}`,
-      }),
-
-      db
-        .collection("groups")
-        .doc(groupId)
-        .update({
-          "stats.upcomingMatchCount":
-            FieldValue.increment(1),
-
-          "stats.matchesCreated30d":
-            FieldValue.increment(1),
-
-          "stats.lastActivityAt":
-            now,
-
-          updatedAt:
-            now,
-        }),
-    ]);
-  } catch (error) {
-    /*
-     * Le match existe déjà.
-     * On ne renvoie pas un faux échec au client,
-     * afin d'éviter une nouvelle création et un doublon.
-     */
-    logger?.error?.(
-      "createMatch group side effects failed",
-      {
-        groupId,
-        matchId,
-        uid,
-        err: String(
-          error?.message
-          ?? error
-        ),
-      }
-    );
-  }
-}
 
 
 export function buildCreateMatch({
@@ -1089,7 +982,7 @@ export function buildCreateMatch({
           });
         }
 
-        await recordGroupMatchCreated({
+        await recordMatchCreated({
           groupId:
             input.groupId,
 

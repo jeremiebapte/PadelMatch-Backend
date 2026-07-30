@@ -6,6 +6,7 @@ export * from "./GroupSnapshotBuilder.js";
 export * from "./GroupHealthCalculator.js";
 export * from "./GroupActivityRecorder.js";
 export * from "./GroupMembershipService.js";
+export * from "./GroupMatchEventService.js";
 
 export * from "./GroupInviteService.js";
 export * from "./GroupJoinRequestService.js";

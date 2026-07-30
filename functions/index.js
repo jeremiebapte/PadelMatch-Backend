@@ -84,6 +84,16 @@ import {
 } from "./createMatch.js";
 
 import {
+  createGroupActivityRecorder,
+  recordMatchCreated,
+  recordMatchUpdated,
+  recordMatchDeleted,
+  recordMatchJoined,
+  recordMatchLeft,
+  recordMatchCompleted,
+} from "./domain/groups/index.js";
+
+import {
   buildUpdateGroup,
 } from "./updateGroup.js";
 
@@ -124,6 +134,12 @@ initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
 const authAdmin = getAuth();
+
+const recordGroupActivity =
+  createGroupActivityRecorder({
+    db,
+    logger,
+  });
 
 const writeClubActivityEvent =
   createClubActivityWriter({
@@ -3606,6 +3622,19 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
 
   await matchRef.delete();
 
+  if (match.groupId) {
+    await recordMatchDeleted({
+      match,
+      groupId: match.groupId,
+      matchId,
+      uid,
+      recordGroupActivity,
+      db,
+      FieldValue,
+      logger,
+    });
+  }
+
   logger.info("deleteMatch ok", {
     matchId,
     uid,
@@ -3717,6 +3746,20 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
   patch.updatedAt = FieldValue.serverTimestamp();
 
   await matchRef.set(patch, { merge: true });
+
+  if (existing.groupId) {
+    await recordMatchUpdated({
+      before: existing,
+      after: { ...existing, ...patch },
+      groupId: existing.groupId,
+      matchId,
+      uid,
+      recordGroupActivity,
+      db,
+      FieldValue,
+      logger,
+    });
+  }
 
   logger.info("updateMatch ok", {
     matchId,
@@ -3836,6 +3879,121 @@ export const onMatchParticipantsChange = onDocumentUpdated(
     left.forEach((u) => recipients.delete(u));
 
     const ops = [];
+
+    const groupId = asString(m.groupId);
+    const capacityRaw = Number(m.capacity ?? 4);
+    const capacity =
+      Number.isFinite(capacityRaw) &&
+      capacityRaw > 0
+        ? capacityRaw
+        : 4;
+
+    const becameFull =
+      beforeCount < capacity &&
+      afterCount >= capacity;
+
+    const groupParticipantActivityOps = [];
+
+    if (groupId) {
+      const loadActorProfile =
+        async (uid) => {
+          try {
+            const userSnap =
+              await db
+                .collection("users")
+                .doc(uid)
+                .get();
+
+            const user =
+              userSnap.exists
+                ? userSnap.data() || {}
+                : {};
+
+            return {
+              pseudo: asString(
+                user.pseudo ||
+                user.username ||
+                user.displayName
+              ),
+              avatar: asString(
+                user.avatarUrl ||
+                user.avatarURL ||
+                user.photoURL ||
+                user.avatar
+              ),
+            };
+          } catch (error) {
+            logger.warn(
+              "group match actor snapshot load failed",
+              {
+                matchId,
+                groupId,
+                uid,
+                err: String(
+                  error?.message ?? error
+                ),
+              }
+            );
+
+            return {
+              pseudo: await pseudoOf(uid),
+              avatar: "",
+            };
+          }
+        };
+
+      for (const uid of joined) {
+        const actorProfile =
+          await loadActorProfile(uid);
+
+        groupParticipantActivityOps.push(
+          recordMatchJoined({
+            match: m,
+            groupId,
+            matchId,
+            uid,
+            actorProfile,
+            recordGroupActivity,
+            FieldValue,
+            logger,
+          })
+        );
+      }
+
+      for (const uid of left) {
+        const actorProfile =
+          await loadActorProfile(uid);
+
+        groupParticipantActivityOps.push(
+          recordMatchLeft({
+            match: m,
+            groupId,
+            matchId,
+            uid,
+            actorProfile,
+            recordGroupActivity,
+            FieldValue,
+            logger,
+          })
+        );
+      }
+
+      if (becameFull) {
+        groupParticipantActivityOps.push(
+          recordMatchCompleted({
+            match: m,
+            groupId,
+            matchId,
+            capacity,
+            recordGroupActivity,
+            FieldValue,
+            logger,
+          })
+        );
+      }
+    }
+
+    ops.push(...groupParticipantActivityOps);
 
     for (const uid of recipients) {
       const tokens = await tokensOf(uid);
