@@ -2,6 +2,7 @@ export const GROUP_SCHEMA_VERSION = 1;
 export const GROUP_ACTIVITY_SCHEMA_VERSION = 1;
 export const GROUP_HEALTH_VERSION = 1;
 export const GROUP_INVITE_SCHEMA_VERSION = 1;
+export const GROUP_JOIN_REQUEST_SCHEMA_VERSION = 1;
 
 export const GROUP_NAME_MIN_LENGTH = 3;
 export const GROUP_NAME_MAX_LENGTH = 60;
