@@ -9,7 +9,9 @@ async function record({
   matchId,
   uid,
   actorProfile = {},
+  creatorProfile = {},
   match,
+  input,
   recordGroupActivity,
   FieldValue,
   logger,
@@ -18,6 +20,14 @@ async function record({
   if (!groupId || !recordGroupActivity) {
     return;
   }
+
+  const profile =
+    Object.keys(actorProfile).length > 0
+      ? actorProfile
+      : creatorProfile;
+
+  const matchData =
+    match ?? input ?? {};
 
   try {
     await recordGroupActivity({
@@ -36,31 +46,31 @@ async function record({
 
       matchId,
 
-      ...(actorProfile.pseudo
+      ...(profile.pseudo
         ? {
             actorPseudoSnapshot:
-              actorProfile.pseudo,
+              profile.pseudo,
           }
         : {}),
 
-      ...(actorProfile.avatar
+      ...(profile.avatar
         ? {
             actorAvatarSnapshot:
-              actorProfile.avatar,
+              profile.avatar,
           }
         : {}),
 
-      ...(match?.lieu
+      ...(matchData?.lieu
         ? {
             matchPlaceNameSnapshot:
-              match.lieu,
+              matchData.lieu,
           }
         : {}),
 
-      ...(match?.dateHeure
+      ...(matchData?.dateHeure
         ? {
             matchDateSnapshot:
-              match.dateHeure,
+              matchData.dateHeure,
           }
         : {}),
 
