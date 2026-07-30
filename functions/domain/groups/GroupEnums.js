@@ -114,6 +114,7 @@ export const GroupActivityType = Object.freeze({
   MATCH_LEFT: "match_left",
   MATCH_COMPLETED: "match_completed",
   MATCH_CANCELLED: "match_cancelled",
+  MATCH_DELETED: "match_deleted",
   SPOT_REOPENED: "spot_reopened",
 });
 
