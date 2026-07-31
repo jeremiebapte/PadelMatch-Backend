@@ -702,6 +702,7 @@ export function buildCreateMatch({
   hasReservationOverlap,
   hasPlaceConflictKm1,
   recordClubActivity,
+  notifyGroupMatchCreated,
   frDate,
   frTime,
 }) {
@@ -997,6 +998,56 @@ export function buildCreateMatch({
           FieldValue,
           logger,
         });
+
+        if (
+          input.groupId
+          && typeof notifyGroupMatchCreated
+            === "function"
+        ) {
+          try {
+            await notifyGroupMatchCreated({
+              groupId:
+                input.groupId,
+
+              group:
+                groupContext?.group
+                ?? {},
+
+              matchId:
+                matchReference.id,
+
+              creatorUid:
+                uid,
+
+              creatorProfile,
+
+              match: {
+                ...document,
+                matchId:
+                  matchReference.id,
+              },
+            });
+          } catch (error) {
+            logger?.warn?.(
+              "createMatch group notification ignored failure",
+              {
+                groupId:
+                  input.groupId,
+
+                matchId:
+                  matchReference.id,
+
+                uid,
+
+                error:
+                  String(
+                    error?.message
+                    ?? error
+                  ),
+              }
+            );
+          }
+        }
 
         return {
           ok: true,

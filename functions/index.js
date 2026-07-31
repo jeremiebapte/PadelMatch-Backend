@@ -84,6 +84,24 @@ import {
 } from "./createMatch.js";
 
 import {
+  buildNotifyGroupMatchCreated,
+  buildNotifyGroupMatchUpdated,
+  buildNotifyGroupMatchCancelled,
+  buildNotifyGroupMatchPlayerJoined,
+  buildNotifyGroupMatchPlayerLeft,
+  buildNotifyGroupMatchFull,
+  buildNotifyGroupMatchSpotAvailable,
+} from "./domain/groups/GroupMatchNotificationService.js";
+
+import {
+  buildGetEligibleGroupRecipients,
+} from "./domain/groups/GroupNotificationRecipientService.js";
+
+import {
+  buildGetEligibleMatchRecipients,
+} from "./domain/groups/MatchNotificationRecipientService.js";
+
+import {
   createGroupActivityRecorder,
   recordMatchCreated,
   recordMatchUpdated,
@@ -1335,6 +1353,104 @@ export const checkPseudoAvailability = onCall(
   }
 );
 
+const getEligibleGroupRecipients =
+  buildGetEligibleGroupRecipients({
+    db,
+    logger,
+  });
+
+
+const getEligibleMatchRecipients =
+  buildGetEligibleMatchRecipients({
+    db,
+    logger,
+  });
+
+
+const notifyGroupMatchCreated =
+  buildNotifyGroupMatchCreated({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchUpdated =
+  buildNotifyGroupMatchUpdated({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchCancelled =
+  buildNotifyGroupMatchCancelled({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchPlayerJoined =
+  buildNotifyGroupMatchPlayerJoined({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchPlayerLeft =
+  buildNotifyGroupMatchPlayerLeft({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchFull =
+  buildNotifyGroupMatchFull({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
+const notifyGroupMatchSpotAvailable =
+  buildNotifyGroupMatchSpotAvailable({
+    getEligibleGroupRecipients,
+    getEligibleMatchRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+    frDate,
+    frTime,
+  });
+
+
 export const createMatch =
   buildCreateMatch({
     onCall,
@@ -1347,6 +1463,7 @@ export const createMatch =
     hasReservationOverlap,
     hasPlaceConflictKm1,
     recordClubActivity,
+    notifyGroupMatchCreated,
     frDate,
     frTime,
   });
@@ -3108,6 +3225,12 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
   let resultClubId = "";
   let resultIsClubMatch = false;
 
+  let participationPreviousMatch = null;
+  let participationUpdatedMatch = null;
+  let participationGroupId = "";
+  let participationCapacity = MAX_PLAYERS;
+  let participationBecameFull = false;
+
   await db.runTransaction(async (tx) => {
     // --------------------------------------------------
     // LECTURES
@@ -3215,9 +3338,21 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
     const needed =
       joinWithFriend ? 2 : 1;
 
+    const capacityRaw =
+      Number(
+        matchData.capacity
+        ?? MAX_PLAYERS
+      );
+
+    const capacity =
+      Number.isFinite(capacityRaw)
+      && capacityRaw > 0
+        ? capacityRaw
+        : MAX_PLAYERS;
+
     if (
       current.length + needed
-      > MAX_PLAYERS
+      > capacity
     ) {
       throw new HttpsError(
         "failed-precondition",
@@ -3226,6 +3361,9 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
           : "NEED_ONE_SLOT"
       );
     }
+
+    const previousParticipants =
+      current.slice();
 
     // --------------------------------------------------
     // ÉCRITURE OPÉRATIONNELLE DU MATCH
@@ -3238,6 +3376,29 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
         `${friendMarkerPrefix(uid)}${friendName}`
       );
     }
+
+    participationPreviousMatch = {
+      ...matchData,
+      participants:
+        previousParticipants,
+    };
+
+    participationUpdatedMatch = {
+      ...matchData,
+      participants:
+        current.slice(),
+      capacity,
+    };
+
+    participationGroupId =
+      asString(matchData.groupId);
+
+    participationCapacity =
+      capacity;
+
+    participationBecameFull =
+      previousParticipants.length < capacity
+      && current.length >= capacity;
 
     tx.update(matchRef, {
       participants: current,
@@ -3321,6 +3482,114 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
     }
   });
 
+  if (
+    participationGroupId
+    && participationPreviousMatch
+    && participationUpdatedMatch
+  ) {
+    const actorUserSnap =
+      await db
+        .collection("users")
+        .doc(uid)
+        .get();
+
+    const actorUser =
+      actorUserSnap.exists
+        ? actorUserSnap.data() || {}
+        : {};
+
+    const actorProfile = {
+      pseudo: asString(
+        actorUser.pseudo
+        || actorUser.username
+        || actorUser.displayName
+      ),
+
+      avatar: asString(
+        actorUser.avatarUrl
+        || actorUser.avatarURL
+        || actorUser.photoURL
+        || actorUser.photoUrl
+        || actorUser.avatar
+      ),
+    };
+
+    try {
+      await notifyGroupMatchPlayerJoined({
+        groupId:
+          participationGroupId,
+
+        matchId,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        previousMatch:
+          participationPreviousMatch,
+
+        match:
+          participationUpdatedMatch,
+      });
+    } catch (error) {
+      logger.warn(
+        "joinMatch player-joined notification ignored failure",
+        {
+          groupId:
+            participationGroupId,
+          matchId,
+          uid,
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
+
+    if (participationBecameFull) {
+      try {
+        await notifyGroupMatchFull({
+          groupId:
+            participationGroupId,
+
+          matchId,
+
+          actorUid:
+            uid,
+
+          actorProfile,
+
+          previousMatch:
+            participationPreviousMatch,
+
+          match: {
+            ...participationUpdatedMatch,
+            capacity:
+              participationCapacity,
+          },
+        });
+      } catch (error) {
+        logger.warn(
+          "joinMatch full notification ignored failure",
+          {
+            groupId:
+              participationGroupId,
+            matchId,
+            uid,
+            error:
+              String(
+                error?.message
+                ?? error
+              ),
+          }
+        );
+      }
+    }
+  }
+
   logger.info(
     "joinMatch ok",
     {
@@ -3331,6 +3600,10 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
         resultIsClubMatch,
       clubId:
         resultClubId || null,
+      groupId:
+        participationGroupId || null,
+      becameFull:
+        participationBecameFull,
     }
   );
 
@@ -3365,6 +3638,13 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
 
   let resultClubId = "";
   let resultIsClubMatch = false;
+
+  let participationPreviousMatch = null;
+  let participationUpdatedMatch = null;
+  let participationGroupId = "";
+  let participationCapacity = MAX_PLAYERS;
+  let participationWasFull = false;
+  let participationSpotAvailable = false;
 
   await db.runTransaction(async (tx) => {
     // --------------------------------------------------
@@ -3469,6 +3749,45 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         return true;
       });
 
+    const capacityRaw =
+      Number(
+        matchData.capacity
+        ?? MAX_PLAYERS
+      );
+
+    const capacity =
+      Number.isFinite(capacityRaw)
+      && capacityRaw > 0
+        ? capacityRaw
+        : MAX_PLAYERS;
+
+    participationPreviousMatch = {
+      ...matchData,
+      participants:
+        current.slice(),
+      capacity,
+    };
+
+    participationUpdatedMatch = {
+      ...matchData,
+      participants:
+        filtered.slice(),
+      capacity,
+    };
+
+    participationGroupId =
+      asString(matchData.groupId);
+
+    participationCapacity =
+      capacity;
+
+    participationWasFull =
+      current.length >= capacity;
+
+    participationSpotAvailable =
+      participationWasFull
+      && filtered.length < capacity;
+
     // --------------------------------------------------
     // ÉCRITURE OPÉRATIONNELLE
     // --------------------------------------------------
@@ -3558,6 +3877,114 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
     }
   });
 
+  if (
+    participationGroupId
+    && participationPreviousMatch
+    && participationUpdatedMatch
+  ) {
+    const actorUserSnap =
+      await db
+        .collection("users")
+        .doc(uid)
+        .get();
+
+    const actorUser =
+      actorUserSnap.exists
+        ? actorUserSnap.data() || {}
+        : {};
+
+    const actorProfile = {
+      pseudo: asString(
+        actorUser.pseudo
+        || actorUser.username
+        || actorUser.displayName
+      ),
+
+      avatar: asString(
+        actorUser.avatarUrl
+        || actorUser.avatarURL
+        || actorUser.photoURL
+        || actorUser.photoUrl
+        || actorUser.avatar
+      ),
+    };
+
+    try {
+      await notifyGroupMatchPlayerLeft({
+        groupId:
+          participationGroupId,
+
+        matchId,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        previousMatch:
+          participationPreviousMatch,
+
+        match:
+          participationUpdatedMatch,
+      });
+    } catch (error) {
+      logger.warn(
+        "leaveMatch player-left notification ignored failure",
+        {
+          groupId:
+            participationGroupId,
+          matchId,
+          uid,
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
+
+    if (participationSpotAvailable) {
+      try {
+        await notifyGroupMatchSpotAvailable({
+          groupId:
+            participationGroupId,
+
+          matchId,
+
+          actorUid:
+            uid,
+
+          actorProfile,
+
+          previousMatch:
+            participationPreviousMatch,
+
+          match: {
+            ...participationUpdatedMatch,
+            capacity:
+              participationCapacity,
+          },
+        });
+      } catch (error) {
+        logger.warn(
+          "leaveMatch spot-available notification ignored failure",
+          {
+            groupId:
+              participationGroupId,
+            matchId,
+            uid,
+            error:
+              String(
+                error?.message
+                ?? error
+              ),
+          }
+        );
+      }
+    }
+  }
+
   logger.info(
     "leaveMatch ok",
     {
@@ -3567,6 +3994,12 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         resultIsClubMatch,
       clubId:
         resultClubId || null,
+      groupId:
+        participationGroupId || null,
+      wasFull:
+        participationWasFull,
+      spotAvailable:
+        participationSpotAvailable,
     }
   );
 
@@ -3655,6 +4088,37 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
+
+    try {
+      await notifyGroupMatchCancelled({
+        groupId:
+          match.groupId,
+
+        matchId,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        match,
+      });
+    } catch (error) {
+      logger.warn(
+        "deleteMatch group notification ignored failure",
+        {
+          groupId:
+            match.groupId,
+          matchId,
+          uid,
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
   }
 
   logger.info("deleteMatch ok", {
@@ -3887,8 +4351,13 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
   await matchRef.set(patch, { merge: true });
 
   if (existing.groupId) {
+    const updatedMatch = {
+      ...existing,
+      ...patch,
+    };
+
     await recordMatchUpdated({
-      match: { ...existing, ...patch },
+      match: updatedMatch,
       groupId: existing.groupId,
       matchId,
       uid,
@@ -3898,6 +4367,48 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
+
+    try {
+      await notifyGroupMatchUpdated({
+        groupId:
+          existing.groupId,
+
+        matchId,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        previousMatch:
+          existing,
+
+        match:
+          updatedMatch,
+
+        changedKeys:
+          Object.keys(patch)
+            .filter(
+              (key) =>
+                key !== "updatedAt"
+            ),
+      });
+    } catch (error) {
+      logger.warn(
+        "updateMatch group notification ignored failure",
+        {
+          groupId:
+            existing.groupId,
+          matchId,
+          uid,
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
   }
 
   logger.info("updateMatch ok", {
@@ -4134,36 +4645,76 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 
     ops.push(...groupParticipantActivityOps);
 
-    for (const uid of recipients) {
-      const tokens = await tokensOf(uid);
-      if (!tokens.length) continue;
+    // Pour un match de groupe, joinMatch et leaveMatch utilisent
+    // désormais GroupMatchNotificationService.
+    // Les anciennes notifications restent actives uniquement
+    // pour les matchs hors groupe afin d’éviter les doublons.
+    if (!groupId) {
+      for (const recipientUid of recipients) {
+        const tokens =
+          await tokensOf(recipientUid);
 
-      for (const j of joined) {
-        const copy = copyFor("match", "join", {
-          pseudo: await pseudoOf(j),
-          lieu,
-        });
-        ops.push(
-          send(tokens, {
-            title: copy.title,
-            body: copy.body,
-            data: { type: "match", subtype: "join", matchId },
-          })
-        );
-      }
+        if (!tokens.length) {
+          continue;
+        }
 
-      for (const l of left) {
-        const copy = copyFor("match", "leave", {
-          pseudo: await pseudoOf(l),
-          lieu,
-        });
-        ops.push(
-          send(tokens, {
-            title: copy.title,
-            body: copy.body,
-            data: { type: "match", subtype: "leave", matchId },
-          })
-        );
+        for (const joinedUid of joined) {
+          const copy =
+            copyFor(
+              "match",
+              "join",
+              {
+                pseudo:
+                  await pseudoOf(joinedUid),
+                lieu,
+              }
+            );
+
+          ops.push(
+            send(tokens, {
+              title:
+                copy.title,
+              body:
+                copy.body,
+              data: {
+                type:
+                  "match",
+                subtype:
+                  "join",
+                matchId,
+              },
+            })
+          );
+        }
+
+        for (const leftUid of left) {
+          const copy =
+            copyFor(
+              "match",
+              "leave",
+              {
+                pseudo:
+                  await pseudoOf(leftUid),
+                lieu,
+              }
+            );
+
+          ops.push(
+            send(tokens, {
+              title:
+                copy.title,
+              body:
+                copy.body,
+              data: {
+                type:
+                  "match",
+                subtype:
+                  "leave",
+                matchId,
+              },
+            })
+          );
+        }
       }
     }
 
