@@ -3620,6 +3620,27 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
     }
   }
 
+  const actorUserSnap = await db
+    .collection("users")
+    .doc(uid)
+    .get();
+
+  const actorUser =
+    actorUserSnap.exists
+      ? actorUserSnap.data() || {}
+      : {};
+
+  const actorProfile = {
+    pseudo: asString(
+      actorUser.pseudo ||
+      actorUser.username
+    ),
+    avatar: asString(
+      actorUser.avatar ||
+      actorUser.photoUrl
+    ),
+  };
+
   await matchRef.delete();
 
   if (match.groupId) {
@@ -3628,6 +3649,7 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
       groupId: match.groupId,
       matchId,
       uid,
+      actorProfile,
       recordGroupActivity,
       db,
       FieldValue,
@@ -3743,17 +3765,134 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
     patch.courtLabel = courtLabel;
   }
 
+  const placeNameRaw =
+    req.data?.placeName ??
+    req.data?.lieu;
+
+  if (
+    "placeName" in req.data ||
+    "lieu" in req.data
+  ) {
+    const placeName =
+      asString(placeNameRaw).trim();
+
+    if (!placeName || placeName.length > 160) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: placeName invalid"
+      );
+    }
+
+    patch.placeName = placeName;
+    patch.lieu = placeName;
+  }
+
+  if ("placeId" in req.data) {
+    const placeId =
+      asString(req.data.placeId).trim();
+
+    if (placeId) {
+      patch.placeId = placeId;
+    } else {
+      patch.placeId = FieldValue.delete();
+    }
+  }
+
+  const latitudeRaw =
+    req.data?.latitude ??
+    req.data?.lat;
+
+  if (
+    "latitude" in req.data ||
+    "lat" in req.data
+  ) {
+    const latitude = Number(latitudeRaw);
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: latitude invalid"
+      );
+    }
+
+    patch.latitude = latitude;
+    patch.lat = latitude;
+  }
+
+  const longitudeRaw =
+    req.data?.longitude ??
+    req.data?.lng;
+
+  if (
+    "longitude" in req.data ||
+    "lng" in req.data
+  ) {
+    const longitude = Number(longitudeRaw);
+
+    if (
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "INVALID_ARGUMENT: longitude invalid"
+      );
+    }
+
+    patch.longitude = longitude;
+    patch.lng = longitude;
+  }
+
+  if ("formattedAddress" in req.data) {
+    const formattedAddress =
+      asString(req.data.formattedAddress).trim();
+
+    if (formattedAddress) {
+      patch.formattedAddress =
+        formattedAddress;
+    } else {
+      patch.formattedAddress =
+        FieldValue.delete();
+    }
+  }
+
   patch.updatedAt = FieldValue.serverTimestamp();
+
+  const actorUserSnap = await db
+    .collection("users")
+    .doc(uid)
+    .get();
+
+  const actorUser =
+    actorUserSnap.exists
+      ? actorUserSnap.data() || {}
+      : {};
+
+  const actorProfile = {
+    pseudo: asString(
+      actorUser.pseudo ||
+      actorUser.username
+    ),
+    avatar: asString(
+      actorUser.avatar ||
+      actorUser.photoUrl
+    ),
+  };
 
   await matchRef.set(patch, { merge: true });
 
   if (existing.groupId) {
     await recordMatchUpdated({
-      before: existing,
-      after: { ...existing, ...patch },
+      match: { ...existing, ...patch },
       groupId: existing.groupId,
       matchId,
       uid,
+      actorProfile,
       recordGroupActivity,
       db,
       FieldValue,
