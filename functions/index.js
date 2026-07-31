@@ -98,6 +98,11 @@ import {
 } from "./domain/groups/GroupNotificationRecipientService.js";
 
 import {
+  buildQueueGroupChatNotification,
+  buildFlushGroupChatNotifications,
+} from "./domain/groups/GroupChatNotificationService.js";
+
+import {
   buildGetEligibleMatchRecipients,
 } from "./domain/groups/MatchNotificationRecipientService.js";
 
@@ -1363,6 +1368,25 @@ const getEligibleGroupRecipients =
 const getEligibleMatchRecipients =
   buildGetEligibleMatchRecipients({
     db,
+    logger,
+  });
+
+
+const queueGroupChatNotification =
+  buildQueueGroupChatNotification({
+    db,
+    FieldValue,
+    getEligibleGroupRecipients,
+    logger,
+  });
+
+
+const flushGroupChatNotifications =
+  buildFlushGroupChatNotifications({
+    db,
+    FieldValue,
+    tokensOf,
+    sendChatHybrid,
     logger,
   });
 
@@ -4894,40 +4918,144 @@ export const sendChatNotification = onCall(RUNTIME, async (req) => {
 export const notifyOnNewMessage = onDocumentCreated(
   { region: "europe-west1", document: "messages/{messageId}" },
   async (event) => {
-    const msg = event.data.data() || {};
+    const msg = event.data?.data() || {};
 
-    const senderUid = asString(msg.senderUid);
-    const receiverUid = asString(msg.receiverUid);
-    const matchId = asString(msg.matchId);
-    const text = asString(msg.text);
+    const messageId =
+      asString(event.params?.messageId);
 
-    if (!receiverUid || !matchId) return null;
-    if (senderUid && senderUid === receiverUid) return null;
+    const senderUid =
+      asString(msg.senderUid);
 
-    const tokens = await tokensOf(receiverUid);
-    if (!tokens.length) return null;
+    const senderPseudo =
+      asString(
+        msg.senderPseudoSnapshot
+        || msg.senderPseudo
+        || msg.senderName
+        || msg.pseudo
+      );
 
-    const copy = copyFor("chat", "message", {
-      preview: text ? text.slice(0, 120) : "Message reçu",
-    });
+    const groupId =
+      asString(msg.groupId);
 
-    await sendChatHybrid(tokens, {
-      title: copy.title,
-      body: copy.body,
-      data: {
-        type: "chat",
-        subtype: "message",
-        matchId,
-        senderUid: senderUid || "",
-        otherUid: senderUid || "",
-        title: copy.title,
-        body: copy.body,
-      },
-    });
+    const receiverUid =
+      asString(msg.receiverUid);
+
+    const matchId =
+      asString(msg.matchId);
+
+    const text =
+      asString(msg.text);
+
+    if (groupId) {
+      try {
+        await queueGroupChatNotification({
+          groupId,
+          senderUid,
+          senderPseudo,
+          text,
+          messageId,
+        });
+      } catch (error) {
+        logger.warn(
+          "group chat notification queue failed",
+          {
+            groupId,
+            senderUid,
+            messageId,
+            error:
+              String(
+                error?.message
+                ?? error
+              ),
+          }
+        );
+      }
+
+      return null;
+    }
+
+    if (!receiverUid || !matchId) {
+      return null;
+    }
+
+    if (
+      senderUid
+      && senderUid === receiverUid
+    ) {
+      return null;
+    }
+
+    const tokens =
+      await tokensOf(receiverUid);
+
+    if (!tokens.length) {
+      return null;
+    }
+
+    const copy =
+      copyFor(
+        "chat",
+        "message",
+        {
+          preview:
+            text
+              ? text.slice(0, 120)
+              : "Message reçu",
+        }
+      );
+
+    await sendChatHybrid(
+      tokens,
+      {
+        title:
+          copy.title,
+
+        body:
+          copy.body,
+
+        data: {
+          type:
+            "chat",
+
+          subtype:
+            "message",
+
+          matchId,
+
+          senderUid:
+            senderUid || "",
+
+          otherUid:
+            senderUid || "",
+
+          title:
+            copy.title,
+
+          body:
+            copy.body,
+        },
+      }
+    );
 
     return null;
   }
 );
+
+
+export const flushGroupChatNotificationsCron =
+  onSchedule(
+    {
+      ...RUNTIME_SCHEDULE,
+      schedule: "every 1 minutes",
+      timeZone: "Europe/Paris",
+    },
+    async () => {
+      await flushGroupChatNotifications({
+        now: new Date(),
+        limit: 100,
+      });
+    }
+  );
 
 // ======================================================
 // CLUBS — admin approve/reject (compat prod)
