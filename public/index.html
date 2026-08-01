@@ -2,22 +2,38 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1, viewport-fit=cover"
   >
-  <meta name="theme-color" content="#0b5d3b">
+
+  <meta name="theme-color" content="#07452d">
 
   <title>Invitation à rejoindre un groupe — Padima</title>
 
   <meta
     name="description"
-    content="Vous avez été invité(e) à rejoindre un groupe sur Padima."
+    content="Rejoins ton groupe de padel sur Padima et organise plus facilement vos prochains matchs."
   >
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Padima">
+  <meta
+    property="og:title"
+    content="Tu es invité(e) à rejoindre un groupe Padima"
+  >
+  <meta
+    property="og:description"
+    content="Discute, organise les matchs et retrouve ton groupe dans Padima."
+  >
+
+  <meta name="twitter:card" content="summary_large_image">
 
   <style>
     :root {
       color-scheme: light;
+
       font-family:
         Inter,
         -apple-system,
@@ -25,141 +41,419 @@
         "Segoe UI",
         sans-serif;
 
-      --padima-green: #0b5d3b;
-      --padima-green-dark: #07452d;
-      --padima-green-soft: #eaf5ef;
-      --text-primary: #17211c;
-      --text-secondary: #65716a;
-      --background: #f4f7f5;
+      --green-950: #033321;
+      --green-900: #07452d;
+      --green-800: #0b5d3b;
+      --green-700: #11764b;
+      --green-100: #dff3e8;
+      --green-50: #eff9f3;
+
+      --text-primary: #142019;
+      --text-secondary: #607068;
+      --text-light: #dce9e1;
+
       --surface: #ffffff;
-      --border: #dfe8e2;
+      --surface-muted: #f3f7f4;
+      --border: #dce7e0;
       --danger: #b42318;
+      --danger-soft: #fff1f0;
+
+      --shadow:
+        0 30px 90px rgba(3, 51, 33, 0.18),
+        0 8px 28px rgba(20, 32, 25, 0.08);
     }
 
     * {
       box-sizing: border-box;
     }
 
-    html,
-    body {
+    html {
       min-height: 100%;
-      margin: 0;
+      background: var(--green-950);
     }
 
     body {
+      min-height: 100%;
+      margin: 0;
+      color: var(--text-primary);
       background:
         radial-gradient(
-          circle at top,
-          #dff2e8 0,
-          var(--background) 42%,
-          var(--background) 100%
+          circle at 16% 8%,
+          rgba(86, 188, 130, 0.42),
+          transparent 32%
+        ),
+        radial-gradient(
+          circle at 88% 18%,
+          rgba(255, 255, 255, 0.12),
+          transparent 27%
+        ),
+        linear-gradient(
+          145deg,
+          var(--green-950) 0%,
+          var(--green-900) 46%,
+          var(--green-800) 100%
         );
-      color: var(--text-primary);
     }
 
     button,
     a {
       font: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:focus-visible,
+    a:focus-visible {
+      outline: 3px solid rgba(120, 219, 163, 0.7);
+      outline-offset: 3px;
     }
 
     .page {
       min-height: 100vh;
       min-height: 100dvh;
+
       padding:
         max(24px, env(safe-area-inset-top))
         20px
         max(24px, env(safe-area-inset-bottom));
 
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: grid;
+      place-items: center;
     }
 
-    .card {
-      width: 100%;
-      max-width: 480px;
-      padding: 32px 24px 26px;
+    .shell {
+      width: min(100%, 1040px);
 
-      background: rgba(255, 255, 255, 0.96);
-      border: 1px solid rgba(223, 232, 226, 0.9);
-      border-radius: 28px;
+      display: grid;
+      grid-template-columns:
+        minmax(0, 0.92fr)
+        minmax(360px, 1.08fr);
 
-      box-shadow:
-        0 24px 70px rgba(11, 93, 59, 0.13),
-        0 4px 18px rgba(23, 33, 28, 0.06);
+      overflow: hidden;
 
-      text-align: center;
+      border:
+        1px solid
+        rgba(255, 255, 255, 0.2);
+
+      border-radius: 34px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .story-panel {
+      position: relative;
+      overflow: hidden;
+
+      min-height: 680px;
+      padding: 46px;
+
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+
+      color: white;
+
+      background:
+        linear-gradient(
+          180deg,
+          rgba(2, 42, 27, 0.08),
+          rgba(2, 42, 27, 0.68)
+        ),
+        radial-gradient(
+          circle at 70% 20%,
+          rgba(103, 214, 151, 0.65),
+          transparent 35%
+        ),
+        linear-gradient(
+          145deg,
+          #0d6d45,
+          #043a27
+        );
+    }
+
+    .story-panel::before,
+    .story-panel::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+      pointer-events: none;
+    }
+
+    .story-panel::before {
+      width: 290px;
+      height: 290px;
+      top: -105px;
+      right: -90px;
+
+      border:
+        52px solid
+        rgba(255, 255, 255, 0.09);
+    }
+
+    .story-panel::after {
+      width: 240px;
+      height: 240px;
+      left: -130px;
+      bottom: 90px;
+
+      border:
+        42px solid
+        rgba(255, 255, 255, 0.07);
     }
 
     .brand {
+      position: relative;
+      z-index: 1;
+
       display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
 
-      margin-bottom: 26px;
+      width: fit-content;
 
-      color: var(--padima-green);
-      font-size: 24px;
-      font-weight: 800;
-      letter-spacing: -0.7px;
+      color: white;
+      font-size: 25px;
+      font-weight: 850;
+      letter-spacing: -0.8px;
     }
 
     .brand-mark {
-      width: 42px;
-      height: 42px;
-      border-radius: 14px;
+      width: 45px;
+      height: 45px;
 
       display: grid;
       place-items: center;
 
-      background: var(--padima-green);
-      color: white;
-      font-size: 22px;
-      font-weight: 900;
+      border:
+        1px solid
+        rgba(255, 255, 255, 0.34);
 
-      box-shadow: 0 9px 24px rgba(11, 93, 59, 0.24);
+      border-radius: 15px;
+
+      background:
+        rgba(255, 255, 255, 0.16);
+
+      box-shadow:
+        inset 0 1px 0
+        rgba(255, 255, 255, 0.18);
+
+      backdrop-filter: blur(12px);
     }
 
-    .icon {
-      width: 82px;
-      height: 82px;
-      margin: 0 auto 22px;
+    .brand-mark img {
+      width: 34px;
+      height: 34px;
+      display: block;
+      object-fit: contain;
+    }
+
+    .story-content {
+      position: relative;
+      z-index: 1;
+
+      max-width: 430px;
+    }
+
+    .eyebrow {
+      margin: 0 0 16px;
+
+      color: #bde8cf;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 1.7px;
+      text-transform: uppercase;
+    }
+
+    .story-title {
+      margin: 0;
+
+      font-size: clamp(42px, 5vw, 62px);
+      line-height: 0.98;
+      letter-spacing: -2.8px;
+    }
+
+    .story-description {
+      margin: 22px 0 0;
+      max-width: 390px;
+
+      color: var(--text-light);
+      font-size: 17px;
+      line-height: 1.62;
+    }
+
+    .feature-list {
+      position: relative;
+      z-index: 1;
+
+      margin: 38px 0 0;
+      padding: 0;
+
+      display: grid;
+      gap: 14px;
+
+      list-style: none;
+    }
+
+    .feature {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      color: rgba(255, 255, 255, 0.92);
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .feature-icon {
+      flex: 0 0 auto;
+
+      width: 34px;
+      height: 34px;
 
       display: grid;
       place-items: center;
 
-      border-radius: 27px;
-      background: var(--padima-green-soft);
-      color: var(--padima-green);
-      font-size: 38px;
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.13);
+      backdrop-filter: blur(10px);
+    }
+
+    .content-panel {
+      min-height: 680px;
+      padding: 50px;
+
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+
+      background:
+        radial-gradient(
+          circle at 100% 0,
+          var(--green-50),
+          transparent 35%
+        ),
+        white;
+    }
+
+    .invitation-card {
+      width: 100%;
+      max-width: 450px;
+      margin: 0 auto;
+    }
+
+    .invitation-badge {
+      width: 76px;
+      height: 76px;
+      margin-bottom: 26px;
+
+      display: grid;
+      place-items: center;
+
+      border-radius: 24px;
+      background:
+        linear-gradient(
+          145deg,
+          var(--green-100),
+          var(--green-50)
+        );
+
+      color: var(--green-800);
+
+      box-shadow:
+        inset 0 0 0 1px
+        rgba(11, 93, 59, 0.08);
+    }
+
+    .invitation-badge img {
+      width: 58px;
+      height: 58px;
+      display: block;
+      object-fit: contain;
+      border-radius: 16px;
     }
 
     h1 {
       margin: 0;
 
-      font-size: clamp(28px, 8vw, 38px);
-      line-height: 1.08;
-      letter-spacing: -1.1px;
+      font-size: clamp(34px, 5vw, 48px);
+      line-height: 1.04;
+      letter-spacing: -2px;
     }
 
     .subtitle {
-      margin: 16px auto 0;
-      max-width: 370px;
+      margin: 18px 0 0;
 
       color: var(--text-secondary);
       font-size: 17px;
-      line-height: 1.55;
+      line-height: 1.62;
+    }
+
+    .invite-summary {
+      margin-top: 28px;
+      padding: 18px;
+
+      display: flex;
+      align-items: center;
+      gap: 15px;
+
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--surface-muted);
+    }
+
+    .group-avatar {
+      flex: 0 0 auto;
+
+      width: 54px;
+      height: 54px;
+
+      display: grid;
+      place-items: center;
+
+      border-radius: 18px;
+      background:
+        linear-gradient(
+          145deg,
+          var(--green-800),
+          var(--green-900)
+        );
+
+      color: white;
+      font-size: 24px;
+      font-weight: 850;
+    }
+
+    .summary-copy {
+      min-width: 0;
+    }
+
+    .summary-label {
+      margin: 0;
+
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+    }
+
+    .summary-title {
+      margin: 5px 0 0;
+
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.25;
     }
 
     .actions {
-      margin-top: 30px;
+      margin-top: 28px;
+
       display: grid;
       gap: 12px;
     }
 
     .button {
-      min-height: 56px;
-      padding: 15px 18px;
+      min-height: 58px;
+      padding: 15px 20px;
 
       display: flex;
       align-items: center;
@@ -167,106 +461,280 @@
       gap: 10px;
 
       border: 0;
-      border-radius: 17px;
+      border-radius: 18px;
 
       cursor: pointer;
       text-decoration: none;
-      font-weight: 750;
+      font-weight: 800;
+
       transition:
-        transform 120ms ease,
-        background-color 120ms ease;
+        transform 130ms ease,
+        box-shadow 130ms ease,
+        background-color 130ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
     }
 
     .button:active {
       transform: scale(0.985);
     }
 
+    .button:disabled {
+      cursor: not-allowed;
+    }
+
     .button-primary {
-      background: var(--padima-green);
+      background:
+        linear-gradient(
+          145deg,
+          var(--green-700),
+          var(--green-900)
+        );
+
       color: white;
-      box-shadow: 0 12px 26px rgba(11, 93, 59, 0.24);
+
+      box-shadow:
+        0 14px 30px
+        rgba(7, 69, 45, 0.24);
     }
 
     .button-primary:hover {
-      background: var(--padima-green-dark);
+      box-shadow:
+        0 17px 34px
+        rgba(7, 69, 45, 0.3);
     }
 
     .button-secondary {
-      background: var(--padima-green-soft);
-      color: var(--padima-green);
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--green-800);
+    }
+
+    .button svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .store-title {
+      margin: 28px 0 12px;
+
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
     }
 
     .stores {
-      margin-top: 16px;
-
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+
       gap: 10px;
     }
 
     .store {
-      min-height: 52px;
-      padding: 12px;
+      min-height: 54px;
+      padding: 12px 14px;
 
       display: flex;
       align-items: center;
       justify-content: center;
+      gap: 9px;
 
+      border-radius: 16px;
       background: #101512;
       color: white;
-      border-radius: 15px;
 
       text-decoration: none;
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 750;
+
+      transition:
+        transform 130ms ease,
+        opacity 130ms ease;
+    }
+
+    .store:hover {
+      transform: translateY(-1px);
+    }
+
+    .store svg {
+      width: 20px;
+      height: 20px;
     }
 
     .store-disabled {
-      opacity: 0.45;
+      opacity: 0.4;
       cursor: default;
       pointer-events: none;
     }
 
     .help {
-      margin: 22px 0 0;
+      margin: 20px 0 0;
 
       color: var(--text-secondary);
       font-size: 13px;
-      line-height: 1.5;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .privacy {
+      margin: 14px 0 0;
+
+      color: #8b9891;
+      font-size: 11px;
+      line-height: 1.45;
+      text-align: center;
     }
 
     .error {
       display: none;
 
-      margin-top: 24px;
-      padding: 15px;
+      margin-top: 20px;
+      padding: 15px 16px;
 
-      background: #fff1f0;
       border: 1px solid #fecdca;
-      border-radius: 15px;
+      border-radius: 16px;
 
+      background: var(--danger-soft);
       color: var(--danger);
+
       font-size: 14px;
-      line-height: 1.45;
+      line-height: 1.5;
     }
 
     .home-content {
       display: none;
     }
 
-    @media (max-width: 390px) {
+    .home-content .invitation-card {
+      text-align: center;
+    }
+
+    .home-content .invitation-badge {
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    @media (max-width: 820px) {
       .page {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding:
+          max(14px, env(safe-area-inset-top))
+          14px
+          max(14px, env(safe-area-inset-bottom));
       }
 
-      .card {
-        padding: 28px 18px 22px;
+      .shell {
+        max-width: 580px;
+        grid-template-columns: 1fr;
+        border-radius: 28px;
+      }
+
+      .story-panel {
+        min-height: auto;
+        padding: 28px 26px 30px;
+      }
+
+      .story-content {
+        margin-top: 58px;
+      }
+
+      .story-title {
+        max-width: 450px;
+        font-size: clamp(39px, 10vw, 55px);
+      }
+
+      .story-description {
+        max-width: 450px;
+      }
+
+      .feature-list {
+        margin-top: 28px;
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .content-panel {
+        min-height: auto;
+        padding: 38px 26px 34px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .shell {
         border-radius: 24px;
+      }
+
+      .story-panel {
+        padding: 23px 20px 26px;
+      }
+
+      .brand {
+        font-size: 22px;
+      }
+
+      .brand-mark {
+        width: 41px;
+        height: 41px;
+      }
+
+      .story-content {
+        margin-top: 44px;
+      }
+
+      .story-title {
+        font-size: 39px;
+        letter-spacing: -2px;
+      }
+
+      .story-description {
+        margin-top: 17px;
+        font-size: 15px;
+      }
+
+      .feature-list {
+        grid-template-columns: 1fr;
+        gap: 11px;
+      }
+
+      .content-panel {
+        padding: 32px 20px 26px;
+      }
+
+      .invitation-badge {
+        width: 68px;
+        height: 68px;
+        margin-bottom: 22px;
+        border-radius: 22px;
+      }
+
+      h1 {
+        font-size: 36px;
+        letter-spacing: -1.6px;
+      }
+
+      .subtitle {
+        margin-top: 15px;
+        font-size: 16px;
+      }
+
+      .invite-summary {
+        margin-top: 24px;
       }
 
       .stores {
         grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition: none !important;
       }
     }
   </style>
@@ -274,77 +742,198 @@
 
 <body>
   <main class="page">
-    <section class="card">
-      <div class="brand">
-        <span class="brand-mark">P</span>
-        <span>Padima</span>
-      </div>
+    <section class="shell">
+      <aside class="story-panel">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <img
+              src="/padima-logo.png"
+              alt=""
+              width="34"
+              height="34"
+            >
+          </span>
 
-      <div id="inviteContent">
-        <div class="icon" aria-hidden="true">🎾</div>
-
-        <h1>Rejoins le groupe sur Padima</h1>
-
-        <p class="subtitle">
-          Un membre Padima t’invite à rejoindre son groupe pour organiser
-          plus facilement vos prochains matchs.
-        </p>
-
-        <div class="actions">
-          <button
-            id="openAppButton"
-            class="button button-primary"
-            type="button"
-          >
-            Ouvrir dans Padima
-          </button>
-
-          <button
-            id="copyButton"
-            class="button button-secondary"
-            type="button"
-          >
-            Copier le lien d’invitation
-          </button>
+          <span>Padima</span>
         </div>
 
-        <div class="stores">
-          <a
-            id="playStoreButton"
-            class="store"
-            href="https://play.google.com/store/apps/details?id=com.bapoto.padelmatch"
-            rel="noopener noreferrer"
-          >
-            Google Play
-          </a>
+        <div class="story-content">
+          <p class="eyebrow">Le padel, mieux organisé</p>
 
-          <a
-            id="appStoreButton"
-            class="store store-disabled"
-            href="#"
-            aria-disabled="true"
-          >
-            App Store
-          </a>
+          <h2 class="story-title">
+            Ton groupe.<br>
+            Vos matchs.<br>
+            Au même endroit.
+          </h2>
+
+          <p class="story-description">
+            Padima simplifie l’organisation de vos parties sans remplacer
+            vos habitudes : un groupe, une discussion et tous vos matchs.
+          </p>
         </div>
 
-        <p class="help">
-          L’invitation sera conservée pendant l’ouverture ou l’installation
-          de l’application.
-        </p>
+        <ul class="feature-list">
+          <li class="feature">
+            <span class="feature-icon" aria-hidden="true">✓</span>
+            Organise les prochains matchs
+          </li>
 
-        <div id="errorMessage" class="error"></div>
-      </div>
+          <li class="feature">
+            <span class="feature-icon" aria-hidden="true">✓</span>
+            Discute avec tout le groupe
+          </li>
 
-      <div id="homeContent" class="home-content">
-        <div class="icon" aria-hidden="true">🎾</div>
+          <li class="feature">
+            <span class="feature-icon" aria-hidden="true">✓</span>
+            Retrouve les membres facilement
+          </li>
+        </ul>
+      </aside>
 
-        <h1>Joue. Organise. Progresse.</h1>
+      <section class="content-panel">
+        <div id="inviteContent" class="invitation-card">
+          <div class="invitation-badge" aria-hidden="true">
+            <img
+              src="/padima-logo.png"
+              alt=""
+              width="58"
+              height="58"
+            >
+          </div>
 
-        <p class="subtitle">
-          Padima aide les joueurs à trouver et organiser leurs matchs de padel.
-        </p>
-      </div>
+          <p class="eyebrow">Invitation de groupe</p>
+
+          <h1>Tu es invité(e) à rejoindre Padima</h1>
+
+          <p class="subtitle">
+            Rejoins ton groupe pour discuter, organiser les prochains matchs
+            et ne plus perdre les informations importantes.
+          </p>
+
+          <div class="invite-summary">
+            <div class="group-avatar" aria-hidden="true">P</div>
+
+            <div class="summary-copy">
+              <p class="summary-label">Invitation sécurisée</p>
+              <p class="summary-title">Ton groupe t’attend sur Padima</p>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button
+              id="openAppButton"
+              class="button button-primary"
+              type="button"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5 12h14"></path>
+                <path d="m13 6 6 6-6 6"></path>
+              </svg>
+
+              Ouvrir et rejoindre le groupe
+            </button>
+
+            <button
+              id="copyButton"
+              class="button button-secondary"
+              type="button"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+
+              Copier le lien
+            </button>
+          </div>
+
+          <p class="store-title">
+            Tu n’as pas encore Padima ?
+          </p>
+
+          <div class="stores">
+            <a
+              id="playStoreButton"
+              class="store"
+              href="https://play.google.com/store/apps/details?id=com.bapoto.padelmatch"
+              rel="noopener noreferrer"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M3.6 2.3 14.9 12 3.6 21.7A2 2 0 0 1 3 20.2V3.8a2 2 0 0 1 .6-1.5Zm12.5 10.8 2.8 2.4-3.5 2-2.2-1.9 2.9-2.5Zm3-4.5a1.7 1.7 0 0 1 0 2.8l-1.8 1.5-3.2-2.7 1.3-1.1 3.7-.5ZM15.4 6.5l-2.2 1.9-2.9-2.5 3.5-2 1.6 2.6Z"></path>
+              </svg>
+
+              Google Play
+            </a>
+
+            <a
+              id="appStoreButton"
+              class="store store-disabled"
+              href="#"
+              aria-disabled="true"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M16.7 13.1c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.6-1.9-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.8-1.7 0-3.3 1-4.2 2.5-1.8 3.1-.5 7.7 1.3 10.2.9 1.3 2 2.7 3.4 2.6 1.3-.1 1.8-.9 3.5-.9 1.6 0 2.1.9 3.5.8 1.5 0 2.4-1.3 3.3-2.6 1-1.5 1.4-3 1.5-3.1-.1 0-3.7-1.4-3.7-4Zm-2.5-7.2c.7-.9 1.2-2.1 1.1-3.3-1.1 0-2.4.7-3.2 1.6-.7.8-1.3 2-1.1 3.2 1.2.1 2.5-.6 3.2-1.5Z"></path>
+              </svg>
+
+              App Store
+            </a>
+          </div>
+
+          <p class="help">
+            L’invitation restera disponible pendant l’ouverture ou
+            l’installation de l’application.
+          </p>
+
+          <p class="privacy">
+            Le lien contient uniquement le jeton nécessaire pour retrouver
+            ton invitation.
+          </p>
+
+          <div
+            id="errorMessage"
+            class="error"
+            role="alert"
+          ></div>
+        </div>
+
+        <div id="homeContent" class="home-content">
+          <div class="invitation-card">
+            <div class="invitation-badge" aria-hidden="true">
+              <img
+                src="/padima-logo.png"
+                alt=""
+                width="58"
+                height="58"
+              >
+            </div>
+
+            <p class="eyebrow">Padima</p>
+
+            <h1>Joue. Organise. Progresse.</h1>
+
+            <p class="subtitle">
+              Trouve et organise plus facilement tes prochains matchs
+              de padel.
+            </p>
+          </div>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -358,27 +947,45 @@
       /*
        * À renseigner lorsque l’identifiant public App Store de Padima
        * sera confirmé.
-       *
-       * Exemple :
-       * https://apps.apple.com/fr/app/padima/id1234567890
        */
-      const APP_STORE_URL = "";
+      const APP_STORE_URL = "https://apps.apple.com/fr/app/padelmatch-pm/id6753951970";
 
-      const currentUrl = new URL(window.location.href);
-      const token = (currentUrl.searchParams.get("token") || "").trim();
+      const currentUrl =
+        new URL(window.location.href);
 
-      const inviteContent = document.getElementById("inviteContent");
-      const homeContent = document.getElementById("homeContent");
-      const errorMessage = document.getElementById("errorMessage");
+      const token =
+        (
+          currentUrl.searchParams.get("token")
+          || ""
+        ).trim();
 
-      const openAppButton = document.getElementById("openAppButton");
-      const copyButton = document.getElementById("copyButton");
-      const playStoreButton = document.getElementById("playStoreButton");
-      const appStoreButton = document.getElementById("appStoreButton");
+      const inviteContent =
+        document.getElementById("inviteContent");
+
+      const homeContent =
+        document.getElementById("homeContent");
+
+      const errorMessage =
+        document.getElementById("errorMessage");
+
+      const openAppButton =
+        document.getElementById("openAppButton");
+
+      const copyButton =
+        document.getElementById("copyButton");
+
+      const playStoreButton =
+        document.getElementById("playStoreButton");
+
+      const appStoreButton =
+        document.getElementById("appStoreButton");
 
       const isInviteRoute =
-        window.location.pathname === INVITE_PATH ||
-        window.location.pathname.startsWith(`${INVITE_PATH}/`);
+        window.location.pathname === INVITE_PATH
+        ||
+        window.location.pathname.startsWith(
+          `${INVITE_PATH}/`
+        );
 
       if (!isInviteRoute) {
         inviteContent.style.display = "none";
@@ -388,13 +995,14 @@
 
       if (!token) {
         showError(
-          "Ce lien d’invitation est incomplet. Demande à la personne qui t’a invité(e) de générer un nouveau lien."
+          "Ce lien d’invitation est incomplet. "
+          + "Demande à la personne qui t’a invité(e) "
+          + "de générer un nouveau lien."
         );
 
-        openAppButton.disabled = true;
-        copyButton.disabled = true;
-        openAppButton.style.opacity = "0.5";
-        copyButton.style.opacity = "0.5";
+        disableAction(openAppButton);
+        disableAction(copyButton);
+
         return;
       }
 
@@ -402,58 +1010,83 @@
       configureActions();
 
       function configureStoreLinks() {
-        const encodedFallback = encodeURIComponent(
-          playStoreButton.href
-        );
+        const encodedFallback =
+          encodeURIComponent(
+            playStoreButton.href
+          );
 
-        playStoreButton.dataset.intentFallback = encodedFallback;
+        playStoreButton.dataset.intentFallback =
+          encodedFallback;
 
         if (APP_STORE_URL) {
-          appStoreButton.href = APP_STORE_URL;
-          appStoreButton.classList.remove("store-disabled");
-          appStoreButton.removeAttribute("aria-disabled");
+          appStoreButton.href =
+            APP_STORE_URL;
+
+          appStoreButton.classList.remove(
+            "store-disabled"
+          );
+
+          appStoreButton.removeAttribute(
+            "aria-disabled"
+          );
         }
       }
 
       function configureActions() {
-        openAppButton.addEventListener("click", openApplication);
-        copyButton.addEventListener("click", copyInvitationLink);
+        openAppButton.addEventListener(
+          "click",
+          openApplication
+        );
+
+        copyButton.addEventListener(
+          "click",
+          copyInvitationLink
+        );
       }
 
       function openApplication() {
-        const userAgent = navigator.userAgent || "";
-        const isAndroid = /Android/i.test(userAgent);
-        const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+        const userAgent =
+          navigator.userAgent || "";
+
+        const isAndroid =
+          /Android/i.test(userAgent);
+
+        const isIOS =
+          /iPhone|iPad|iPod/i.test(
+            userAgent
+          );
 
         if (isAndroid) {
           const fallbackUrl =
-            `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
+            "https://play.google.com/store/apps/details"
+            + `?id=${ANDROID_PACKAGE}`;
 
           const intentUrl =
-            `intent://padelmatch-32186.web.app/group/invite` +
-            `?token=${encodeURIComponent(token)}` +
-            `#Intent;scheme=https;` +
-            `package=${ANDROID_PACKAGE};` +
-            `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};` +
-            `end`;
+            "intent://padelmatch-32186.web.app"
+            + "/group/invite"
+            + `?token=${encodeURIComponent(token)}`
+            + "#Intent;"
+            + "scheme=https;"
+            + `package=${ANDROID_PACKAGE};`
+            + "S.browser_fallback_url="
+            + `${encodeURIComponent(fallbackUrl)};`
+            + "end";
 
-          window.location.href = intentUrl;
+          window.location.href =
+            intentUrl;
+
           return;
         }
 
         if (isIOS) {
-          /*
-           * Le lien HTTPS courant est le Universal Link Padima.
-           * Le domaine est déjà associé à l’application via
-           * apple-app-site-association.
-           */
           window.location.href =
-            `${window.location.origin}${INVITE_PATH}` +
-            `?token=${encodeURIComponent(token)}`;
+            `${window.location.origin}${INVITE_PATH}`
+            + `?token=${encodeURIComponent(token)}`;
 
           if (APP_STORE_URL) {
             window.setTimeout(() => {
-              window.location.href = APP_STORE_URL;
+              window.location.href =
+                APP_STORE_URL;
             }, 1800);
           }
 
@@ -461,30 +1094,46 @@
         }
 
         window.location.href =
-          `${window.location.origin}${INVITE_PATH}` +
-          `?token=${encodeURIComponent(token)}`;
+          `${window.location.origin}${INVITE_PATH}`
+          + `?token=${encodeURIComponent(token)}`;
       }
 
       async function copyInvitationLink() {
         try {
-          await navigator.clipboard.writeText(currentUrl.toString());
+          await navigator.clipboard.writeText(
+            currentUrl.toString()
+          );
 
-          const originalText = copyButton.textContent;
-          copyButton.textContent = "Lien copié";
+          const originalText =
+            copyButton.textContent;
+
+          copyButton.textContent =
+            "Lien copié ✓";
 
           window.setTimeout(() => {
-            copyButton.textContent = originalText;
+            copyButton.textContent =
+              originalText;
           }, 1800);
+
         } catch (error) {
           showError(
-            "Impossible de copier automatiquement le lien. Utilise le menu de partage de ton navigateur."
+            "Impossible de copier automatiquement le lien. "
+            + "Utilise le menu de partage de ton navigateur."
           );
         }
       }
 
+      function disableAction(element) {
+        element.disabled = true;
+        element.style.opacity = "0.5";
+      }
+
       function showError(message) {
-        errorMessage.textContent = message;
-        errorMessage.style.display = "block";
+        errorMessage.textContent =
+          message;
+
+        errorMessage.style.display =
+          "block";
       }
     })();
   </script>
