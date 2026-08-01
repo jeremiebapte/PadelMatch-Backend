@@ -155,7 +155,6 @@ service cloud.firestore {
        * passe exclusivement par les Cloud Functions.
        */
       allow get, list: if signedIn()
-        && resource.data.groupId is string
         && (
           (
             resource.data.targetUserId is string
@@ -167,8 +166,11 @@ service cloud.firestore {
             && resource.data.inviterUid == uid()
           )
           ||
-          canManageGroupJoinRequests(
-            resource.data.groupId
+          (
+            resource.data.groupId is string
+            && canManageGroupJoinRequests(
+              resource.data.groupId
+            )
           )
         );
 
