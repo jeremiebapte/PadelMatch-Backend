@@ -136,6 +136,45 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /groupInvites/{inviteId} {
+      /*
+       * Lecture autorisée :
+       * - au destinataire d'une invitation directe ;
+       * - à l'utilisateur ayant créé l'invitation ;
+       * - aux Owner/Admin actifs du groupe concerné.
+       *
+       * Cela couvre les listeners clients :
+       * - invitations reçues :
+       *   targetUserId == request.auth.uid ;
+       * - invitations envoyées :
+       *   inviterUid == request.auth.uid ;
+       * - gestion des invitations du groupe :
+       *   owner/admin actif.
+       *
+       * Toute création, acceptation, révocation ou modification
+       * passe exclusivement par les Cloud Functions.
+       */
+      allow get, list: if signedIn()
+        && resource.data.groupId is string
+        && (
+          (
+            resource.data.targetUserId is string
+            && resource.data.targetUserId == uid()
+          )
+          ||
+          (
+            resource.data.inviterUid is string
+            && resource.data.inviterUid == uid()
+          )
+          ||
+          canManageGroupJoinRequests(
+            resource.data.groupId
+          )
+        );
+
+      allow create, update, delete: if false;
+    }
+
     match /groupJoinRequests/{requestId} {
       /*
        * Lecture autorisée :
