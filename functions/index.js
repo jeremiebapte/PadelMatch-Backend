@@ -128,6 +128,10 @@ import {
   buildLeaveGroup,
 } from "./leaveGroup.js";
 
+import {
+  buildDeleteGroup,
+} from "./deleteGroup.js";
+
 
 import {
   buildSyncGroupMembershipSnapshots,
@@ -6027,6 +6031,16 @@ export const manageGroupMember =
 
 export const leaveGroup =
   buildLeaveGroup({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
+
+export const deleteGroup =
+  buildDeleteGroup({
     onCall,
     HttpsError,
     runtime: RUNTIME,

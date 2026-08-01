@@ -94,6 +94,7 @@ export const GroupActivityType = Object.freeze({
   GROUP_CREATED: "group_created",
   GROUP_UPDATED: "group_updated",
   GROUP_ARCHIVED: "group_archived",
+  GROUP_DELETED: "group_deleted",
   MEMBER_INVITED: "member_invited",
   INVITE_LINK_CREATED: "invite_link_created",
   INVITE_LINK_REVOKED: "invite_link_revoked",
