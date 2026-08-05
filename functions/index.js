@@ -1493,7 +1493,6 @@ export const createMatch =
     logger,
     hasTimeOverlap,
     hasReservationOverlap,
-    hasPlaceConflictKm1,
     recordClubActivity,
     notifyGroupMatchCreated,
     frDate,
@@ -6056,4 +6055,3 @@ export const syncGroupMembershipSnapshots =
     FieldValue,
     logger,
   });
-

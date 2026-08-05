@@ -379,7 +379,6 @@ async function validateScheduling({
   input,
   hasTimeOverlap,
   hasReservationOverlap,
-  hasPlaceConflictKm1,
   logger,
   HttpsError,
 }) {
@@ -460,45 +459,17 @@ async function validateScheduling({
     );
   }
 
-  let placeConflict = false;
+  /*
+   * Aucun blocage basé uniquement sur une proximité GPS.
+   *
+   * Plusieurs terrains et plusieurs matchs peuvent légitimement
+   * exister dans un même club ou dans un rayon inférieur à 1 km.
+   *
+   * Les vrais conflits personnels sont déjà couverts par :
+   * - hasTimeOverlap ;
+   * - hasReservationOverlap.
+   */
 
-  try {
-    placeConflict =
-      await hasPlaceConflictKm1(
-        input.lat,
-        input.lng,
-        input.dateHeure
-      );
-  } catch (error) {
-    logger?.error?.(
-      "createMatch hasPlaceConflictKm1 crash",
-      {
-        uid,
-        placeId:
-          input.placeId,
-        lat: input.lat,
-        lng: input.lng,
-        dateHeure:
-          input.dateHeure,
-        err: String(
-          error?.message
-          ?? error
-        ),
-      }
-    );
-
-    throw new HttpsError(
-      "internal",
-      "PLACE_CONFLICT_INTERNAL"
-    );
-  }
-
-  if (placeConflict) {
-    throw new HttpsError(
-      "failed-precondition",
-      "PLACE_CONFLICT"
-    );
-  }
 }
 
 
@@ -700,7 +671,6 @@ export function buildCreateMatch({
   logger,
   hasTimeOverlap,
   hasReservationOverlap,
-  hasPlaceConflictKm1,
   recordClubActivity,
   notifyGroupMatchCreated,
   frDate,
@@ -757,14 +727,7 @@ export function buildCreateMatch({
     );
   }
 
-  if (
-    typeof hasPlaceConflictKm1
-    !== "function"
-  ) {
-    throw new TypeError(
-      "HAS_PLACE_CONFLICT_REQUIRED"
-    );
-  }
+
 
   const recordGroupActivity =
     createGroupActivityRecorder({
@@ -828,7 +791,6 @@ export function buildCreateMatch({
           input,
           hasTimeOverlap,
           hasReservationOverlap,
-          hasPlaceConflictKm1,
           logger,
           HttpsError,
         });
