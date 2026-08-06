@@ -61,6 +61,53 @@ service cloud.firestore {
         ).data.role in ['owner', 'admin'];
     }
 
+    function hasValidOptionalHandedness(data) {
+      return !('handedness' in data)
+        || (
+          data.handedness is string
+          && data.handedness in [
+            'right',
+            'left',
+            'both',
+            'unspecified'
+          ]
+        );
+    }
+
+    function hasValidOptionalPlayFrequency(data) {
+      return !('playFrequency' in data)
+        || (
+          data.playFrequency is string
+          && data.playFrequency in [
+            'occasionally',
+            'oncePerWeek',
+            'severalTimesPerWeek',
+            'almostEveryDay'
+          ]
+        );
+    }
+
+    function hasValidOptionalGoals(data) {
+      return !('goals' in data)
+        || (
+          data.goals is list
+          && data.goals.size() <= 6
+          && data.goals.hasOnly([
+            'playMore',
+            'findPartners',
+            'improve',
+            'compete',
+            'haveFun',
+            'discoverClubs'
+          ])
+        );
+    }
+
+    function hasValidOptionalProfileUpdatedAt(data) {
+      return !('profileUpdatedAt' in data)
+        || data.profileUpdatedAt is timestamp;
+    }
+
     match /users/{userId} {
       allow get, list: if signedIn();
       allow create: if signedIn()
@@ -71,6 +118,8 @@ service cloud.firestore {
         && onlyKeysChanged([
           'pseudo','pseudoLower',
           'avatar','niveau','notificationsEnabled',
+          'handedness','playFrequency','goals',
+          'profileUpdatedAt',
           'nom','prenom','photoUrl','lat','lng','email',
           'createdAt','updatedAt',
           'fcmToken','fcmPlatform','fcmUpdatedAt',
@@ -79,6 +128,18 @@ service cloud.firestore {
         && (
           !request.resource.data.diff(resource.data).changedKeys().hasAny(['createdAt'])
           || !('createdAt' in resource.data)
+        )
+        && hasValidOptionalHandedness(
+          request.resource.data
+        )
+        && hasValidOptionalPlayFrequency(
+          request.resource.data
+        )
+        && hasValidOptionalGoals(
+          request.resource.data
+        )
+        && hasValidOptionalProfileUpdatedAt(
+          request.resource.data
         );
       allow delete: if signedIn() && userId == uid();
       match /fcmTokens/{tokenId} {
