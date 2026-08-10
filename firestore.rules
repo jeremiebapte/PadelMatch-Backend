@@ -180,6 +180,29 @@ service cloud.firestore {
       allow list, delete: if false;
     }
 
+    /*
+     * Behavioral Events V2
+     *
+     * Journal comportemental client append-only :
+     * - un utilisateur ne peut créer que ses propres événements ;
+     * - l'id métier doit correspondre à l'id du document Firestore ;
+     * - un utilisateur ne peut lire que ses propres événements ;
+     * - aucune modification ni suppression côté client.
+     *
+     * La lecture en liste nécessite également que la requête cliente
+     * soit contrainte sur userId == uid().
+     */
+    match /playerEvents/{eventId} {
+      allow get, list: if signedIn()
+        && resource.data.userId == uid();
+
+      allow create: if signedIn()
+        && request.resource.data.userId == uid()
+        && request.resource.data.id == eventId;
+
+      allow update, delete: if false;
+    }
+
     /* ---------- Groups ---------- */
 
     match /groupMemberships/{membershipId} {
