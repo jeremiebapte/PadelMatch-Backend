@@ -181,6 +181,25 @@ service cloud.firestore {
     }
 
     /*
+     * Player Intelligence
+     *
+     * Profil d'intelligence privé du joueur :
+     * - accès limité au propriétaire du document ;
+     * - création et mise à jour nécessaires aux agrégations client ;
+     * - aucune lecture de collection ;
+     * - aucune suppression côté client.
+     */
+    match /playerIntelligence/{userId} {
+      allow get: if signedIn()
+        && userId == uid();
+
+      allow create, update: if signedIn()
+        && userId == uid();
+
+      allow list, delete: if false;
+    }
+
+    /*
      * Behavioral Events V2
      *
      * Journal comportemental client append-only :
