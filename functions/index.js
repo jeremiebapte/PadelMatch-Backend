@@ -3534,8 +3534,7 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
   });
 
   if (
-    participationGroupId
-    && participationPreviousMatch
+    participationPreviousMatch
     && participationUpdatedMatch
   ) {
     const actorUserSnap =
@@ -3611,8 +3610,9 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
       );
     }
 
-    try {
-      await notifyGroupMatchPlayerJoined({
+    if (participationGroupId) {
+      try {
+        await notifyGroupMatchPlayerJoined({
         groupId:
           participationGroupId,
 
@@ -3684,6 +3684,8 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
           }
         );
       }
+    }
+
     }
   }
 
@@ -3975,8 +3977,7 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
   });
 
   if (
-    participationGroupId
-    && participationPreviousMatch
+    participationPreviousMatch
     && participationUpdatedMatch
   ) {
     const actorUserSnap =
@@ -4052,8 +4053,9 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
       );
     }
 
-    try {
-      await notifyGroupMatchPlayerLeft({
+    if (participationGroupId) {
+      try {
+        await notifyGroupMatchPlayerLeft({
         groupId:
           participationGroupId,
 
@@ -4125,6 +4127,8 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
           }
         );
       }
+    }
+
     }
   }
 
