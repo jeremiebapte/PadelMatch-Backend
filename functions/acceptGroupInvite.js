@@ -1,4 +1,8 @@
 import {
+  createUserActivityRecorder,
+} from "./domain/activity/UserActivityRecorder.js";
+
+import {
   GroupActivityType,
   GroupActivityVisibility,
   GroupInviteError,
@@ -199,7 +203,14 @@ export function buildAcceptGroupInvite({
       logger,
     });
 
-  return onCall(
+
+  const recordUserActivity =
+    createUserActivityRecorder({
+      db,
+      logger,
+    });
+
+return onCall(
     runtime,
     async (req) => {
       const uid = req.auth?.uid;
@@ -477,6 +488,85 @@ export function buildAcceptGroupInvite({
                     transaction,
                   }
                 );
+
+              const inviterUid =
+                typeof invite.inviterUid === "string"
+                  ? invite.inviterUid.trim()
+                  : "";
+
+              const groupName =
+                typeof invite.groupNameSnapshot === "string"
+                && invite.groupNameSnapshot.trim()
+                  ? invite.groupNameSnapshot.trim()
+                  : "Groupe Padima";
+
+              if (
+                inviterUid &&
+                inviterUid !== uid
+              ) {
+                await recordUserActivity(
+                  {
+                    userId:
+                      inviterUid,
+
+                    type:
+                      "group_invite_accepted",
+
+                    entityType:
+                      "group",
+
+                    entityId:
+                      groupId,
+
+                    title:
+                      "Invitation acceptée",
+
+                    subtitle:
+                      `${membership.userPseudoSnapshot ?? "Un joueur"} a rejoint « ${groupName} ».`,
+
+                    sourceType:
+                      "group_invite",
+
+                    createdAt:
+                      now,
+
+                    groupId,
+
+                    inviteId:
+                      inviteRef.id,
+
+                    actorUid:
+                      uid,
+
+                    actorPseudoSnapshot:
+                      membership.userPseudoSnapshot ??
+                      "Joueur",
+
+                    ...(membership.userAvatarSnapshot
+                      ? {
+                          actorAvatarSnapshot:
+                            membership.userAvatarSnapshot,
+                        }
+                      : {}),
+
+                    sourceId:
+                      `invite_accepted:${inviteRef.id}:${uid}`,
+
+                    metadata: {
+                      inviteId:
+                        inviteRef.id,
+                      membershipId,
+                      inviteType:
+                        invite.type,
+                      inviteSource:
+                        invite.source,
+                    },
+                  },
+                  {
+                    transaction,
+                  }
+                );
+              }
 
               return {
                 inviteId:

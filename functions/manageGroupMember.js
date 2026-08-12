@@ -10,6 +10,10 @@
 // ======================================================
 
 import {
+  createUserActivityRecorder,
+} from "./domain/activity/UserActivityRecorder.js";
+
+import {
   GroupActivityType,
   GroupActivityVisibility,
   GroupMembershipError,
@@ -223,7 +227,14 @@ export function buildManageGroupMember({
       logger,
     });
 
-  return onCall(
+
+  const recordUserActivity =
+    createUserActivityRecorder({
+      db,
+      logger,
+    });
+
+return onCall(
     runtime,
     async (req) => {
       const uid = req.auth?.uid;
@@ -634,6 +645,131 @@ export function buildManageGroupMember({
                     transaction,
                   }
                 );
+
+              if (
+                action === GroupMemberAction.PROMOTE_TO_ADMIN ||
+                action === GroupMemberAction.DEMOTE_TO_MEMBER
+              ) {
+                await recordUserActivity(
+                  {
+                    userId:
+                      targetUserId,
+
+                    type:
+                      "group_member_role_changed",
+
+                    entityType:
+                      "group",
+
+                    entityId:
+                      groupId,
+
+                    title:
+                      action === GroupMemberAction.PROMOTE_TO_ADMIN
+                        ? "Vous êtes maintenant administrateur"
+                        : "Votre rôle dans le groupe a changé",
+
+                    subtitle:
+                      action === GroupMemberAction.PROMOTE_TO_ADMIN
+                        ? "Vous pouvez désormais gérer davantage d’actions dans le groupe."
+                        : "Vous êtes désormais membre du groupe.",
+
+                    sourceType:
+                      "group_member_management",
+
+                    createdAt:
+                      now,
+
+                    groupId,
+
+                    actorUid:
+                      uid,
+
+                    actorPseudoSnapshot:
+                      actorPseudo,
+
+                    ...(actorAvatar
+                      ? {
+                          actorAvatarSnapshot:
+                            actorAvatar,
+                        }
+                      : {}),
+
+                    sourceId:
+                      `group_role_changed:${groupId}:${targetUserId}:${action}`,
+
+                    metadata: {
+                      action,
+                      previousRole,
+                      nextRole,
+                    },
+                  },
+                  {
+                    transaction,
+                  }
+                );
+              }
+
+              if (
+                action === GroupMemberAction.REMOVE_FROM_GROUP
+              ) {
+                await recordUserActivity(
+                  {
+                    userId:
+                      targetUserId,
+
+                    type:
+                      "group_member_removed",
+
+                    entityType:
+                      "group",
+
+                    entityId:
+                      groupId,
+
+                    title:
+                      "Vous avez été retiré du groupe",
+
+                    subtitle:
+                      "Vous ne faites plus partie de ce groupe.",
+
+                    sourceType:
+                      "group_member_management",
+
+                    createdAt:
+                      now,
+
+                    groupId,
+
+                    actorUid:
+                      uid,
+
+                    actorPseudoSnapshot:
+                      actorPseudo,
+
+                    ...(actorAvatar
+                      ? {
+                          actorAvatarSnapshot:
+                            actorAvatar,
+                        }
+                      : {}),
+
+                    sourceId:
+                      `group_member_removed:${groupId}:${targetUserId}`,
+
+                    metadata: {
+                      action,
+                      previousRole,
+                      previousStatus:
+                        targetMembership.status,
+                      nextStatus,
+                    },
+                  },
+                  {
+                    transaction,
+                  }
+                );
+              }
 
               return {
                 groupId,
