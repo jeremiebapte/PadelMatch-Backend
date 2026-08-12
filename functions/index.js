@@ -84,6 +84,14 @@ import {
 } from "./createMatch.js";
 
 import {
+  createUserActivityRecorder,
+} from "./domain/activity/UserActivityRecorder.js";
+
+import {
+  buildRecordMatchUserActivities,
+} from "./domain/activity/MatchUserActivityService.js";
+
+import {
   buildNotifyGroupMatchCreated,
   buildNotifyGroupMatchUpdated,
   buildNotifyGroupMatchCancelled,
@@ -169,6 +177,18 @@ const authAdmin = getAuth();
 const recordGroupActivity =
   createGroupActivityRecorder({
     db,
+    logger,
+  });
+
+const recordUserActivity =
+  createUserActivityRecorder({
+    db,
+    logger,
+  });
+
+const recordMatchUserActivities =
+  buildRecordMatchUserActivities({
+    recordUserActivity,
     logger,
   });
 
@@ -3546,6 +3566,52 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
     };
 
     try {
+      await recordMatchUserActivities({
+        type:
+          "match_player_joined",
+
+        matchId,
+
+        match:
+          participationUpdatedMatch,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        sourceId:
+          `join_match:${matchId}:${uid}`,
+
+        metadata: {
+          source:
+            "join_match",
+
+          becameFull:
+            participationBecameFull === true,
+        },
+      });
+    } catch (error) {
+      logger.warn(
+        "joinMatch user activity ignored failure",
+        {
+          groupId:
+            participationGroupId
+            || null,
+
+          matchId,
+          uid,
+
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
+
+    try {
       await notifyGroupMatchPlayerJoined({
         groupId:
           participationGroupId,
@@ -3941,6 +4007,52 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
     };
 
     try {
+      await recordMatchUserActivities({
+        type:
+          "match_player_left",
+
+        matchId,
+
+        match:
+          participationUpdatedMatch,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        sourceId:
+          `leave_match:${matchId}:${uid}`,
+
+        metadata: {
+          source:
+            "leave_match",
+
+          spotAvailable:
+            participationSpotAvailable === true,
+        },
+      });
+    } catch (error) {
+      logger.warn(
+        "leaveMatch user activity ignored failure",
+        {
+          groupId:
+            participationGroupId
+            || null,
+
+          matchId,
+          uid,
+
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
+
+    try {
       await notifyGroupMatchPlayerLeft({
         groupId:
           participationGroupId,
@@ -4119,6 +4231,48 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
+
+    try {
+      await recordMatchUserActivities({
+        type:
+          "match_cancelled",
+
+        matchId,
+
+        match,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        sourceId:
+          `delete_match:${matchId}:${uid}`,
+
+        metadata: {
+          source:
+            "delete_match",
+        },
+      });
+    } catch (error) {
+      logger.warn(
+        "deleteMatch user activity ignored failure",
+        {
+          groupId:
+            match.groupId
+            || null,
+
+          matchId,
+          uid,
+
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
 
     try {
       await notifyGroupMatchCancelled({
@@ -4398,6 +4552,56 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
+
+    try {
+      await recordMatchUserActivities({
+        type:
+          "match_updated",
+
+        matchId,
+
+        match:
+          updatedMatch,
+
+        actorUid:
+          uid,
+
+        actorProfile,
+
+        sourceId:
+          `update_match:${matchId}:${uid}`,
+
+        metadata: {
+          source:
+            "update_match",
+
+          changedKeys:
+            Object.keys(patch)
+              .filter(
+                (key) =>
+                  key !== "updatedAt"
+              ),
+        },
+      });
+    } catch (error) {
+      logger.warn(
+        "updateMatch user activity ignored failure",
+        {
+          groupId:
+            existing.groupId
+            || null,
+
+          matchId,
+          uid,
+
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
 
     try {
       await notifyGroupMatchUpdated({
