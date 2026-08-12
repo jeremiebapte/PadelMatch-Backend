@@ -10,6 +10,10 @@
 // ======================================================
 
 import {
+  createUserActivityRecorder,
+} from "./domain/activity/UserActivityRecorder.js";
+
+import {
   GroupActivityType,
   GroupActivityVisibility,
   GroupInviteStatus,
@@ -210,7 +214,14 @@ export function buildDeleteGroup({
       logger,
     });
 
-  return onCall(
+
+  const recordUserActivity =
+    createUserActivityRecorder({
+      db,
+      logger,
+    });
+
+return onCall(
     runtime,
     async (req) => {
       const uid = req.auth?.uid;
@@ -251,6 +262,22 @@ export function buildDeleteGroup({
             .collection("users")
             .doc(uid);
 
+        const activeMembershipsQuery =
+          db
+            .collection(
+              "groupMemberships"
+            )
+            .where(
+              "groupId",
+              "==",
+              groupId
+            )
+            .where(
+              "status",
+              "==",
+              GroupMembershipStatus.ACTIVE
+            );
+
         const transactionResult =
           await db.runTransaction(
             async (transaction) => {
@@ -258,12 +285,16 @@ export function buildDeleteGroup({
                 groupSnapshot,
                 membershipSnapshot,
                 userSnapshot,
+                activeMembershipsSnapshot,
               ] = await Promise.all([
                 transaction.get(groupRef),
                 transaction.get(
                   ownerMembershipRef
                 ),
                 transaction.get(userRef),
+                transaction.get(
+                  activeMembershipsQuery
+                ),
               ]);
 
               if (!groupSnapshot.exists) {
@@ -430,6 +461,91 @@ export function buildDeleteGroup({
                       activityId,
                   }
                 );
+              }
+
+              if (!alreadyDeletedByCurrentOwner) {
+                const groupName =
+                  asString(group.name)
+                  || asString(group.title)
+                  || "Groupe Padima";
+
+                for (
+                  const memberDocument of
+                  activeMembershipsSnapshot.docs
+                ) {
+                  const member =
+                    memberDocument.data() || {};
+
+                  const memberUid =
+                    asString(member.userId);
+
+                  if (
+                    !memberUid ||
+                    memberUid === uid
+                  ) {
+                    continue;
+                  }
+
+                  await recordUserActivity(
+                    {
+                      userId:
+                        memberUid,
+
+                      type:
+                        "group_deleted",
+
+                      entityType:
+                        "group",
+
+                      entityId:
+                        groupId,
+
+                      title:
+                        "Groupe supprimé",
+
+                      subtitle:
+                        `« ${groupName} » a été supprimé.`,
+
+                      sourceType:
+                        "group_management",
+
+                      createdAt:
+                        now,
+
+                      groupId,
+
+                      actorUid:
+                        uid,
+
+                      actorPseudoSnapshot:
+                        actorPseudo,
+
+                      ...(actorAvatar
+                        ? {
+                            actorAvatarSnapshot:
+                              actorAvatar,
+                          }
+                        : {}),
+
+                      sourceId:
+                        `group_deleted:${groupId}`,
+
+                      metadata: {
+                        previousStatus:
+                          group.status,
+
+                        nextStatus:
+                          GroupStatus.DELETED,
+
+                        deletedByUid:
+                          uid,
+                      },
+                    },
+                    {
+                      transaction,
+                    }
+                  );
+                }
               }
 
               return {

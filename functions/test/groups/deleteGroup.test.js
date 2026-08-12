@@ -191,6 +191,7 @@ function createTestEnvironment({
     groupChatNotificationQueue:
       new Map(),
     groupActivities: new Map(),
+    userActivities: new Map(),
   };
 
   if (groupExists) {
@@ -246,6 +247,7 @@ function createTestEnvironment({
 
   const references = new Map();
   let generatedActivityCount = 0;
+  let generatedUserActivityCount = 0;
   let receivedRuntime;
 
   function createReference(
@@ -484,6 +486,18 @@ function createTestEnvironment({
             );
           }
 
+          if (
+            collectionName ===
+            "userActivities"
+          ) {
+            generatedUserActivityCount += 1;
+
+            return createReference(
+              collectionName,
+              `user_activity_${generatedUserActivityCount}`
+            );
+          }
+
           throw new Error(
             `AUTO_ID_NOT_SUPPORTED:${collectionName}`
           );
@@ -508,6 +522,18 @@ function createTestEnvironment({
     async runTransaction(callback) {
       const transaction = {
         async get(ref) {
+          if (
+            ref &&
+            typeof ref.get === "function" &&
+            !ref.path
+          ) {
+            reads.push(
+              "transaction-query"
+            );
+
+            return ref.get();
+          }
+
           reads.push(ref.path);
 
           const data =
@@ -1278,5 +1304,131 @@ test(
       activity.actorAvatarSnapshot,
       "https://example.com/snapshot.png"
     );
+  }
+);
+
+test(
+  "deleteGroup crée group_deleted pour les membres actifs hors owner",
+  async () => {
+    const fixture =
+      createTestEnvironment({
+        memberships: [
+          {
+            id:
+              "group_123_admin_789",
+            data: {
+              groupId:
+                "group_123",
+              userId:
+                "admin_789",
+              role:
+                "admin",
+              status:
+                "active",
+              userPseudoSnapshot:
+                "Admin Test",
+            },
+          },
+          {
+            id:
+              "group_123_member_456",
+            data: {
+              groupId:
+                "group_123",
+              userId:
+                "member_456",
+              role:
+                "member",
+              status:
+                "active",
+              userPseudoSnapshot:
+                "Membre Test",
+            },
+          },
+        ],
+      });
+
+    await fixture.callable({
+      auth: {
+        uid:
+          "user_123",
+      },
+      data: {
+        groupId:
+          "group_123",
+      },
+    });
+
+    const activities =
+      Array.from(
+        fixture.collections
+          .userActivities
+          .values()
+      );
+
+    assert.equal(
+      activities.length,
+      2
+    );
+
+    const byUserId =
+      new Map(
+        activities.map(
+          activity => [
+            activity.userId,
+            activity,
+          ]
+        )
+      );
+
+    assert.equal(
+      byUserId
+        .get("admin_789")
+        ?.type,
+      "group_deleted"
+    );
+
+    assert.equal(
+      byUserId
+        .get("member_456")
+        ?.type,
+      "group_deleted"
+    );
+
+    assert.equal(
+      byUserId.has(
+        "user_123"
+      ),
+      false
+    );
+
+    for (
+      const activity of activities
+    ) {
+      assert.equal(
+        activity.entityType,
+        "group"
+      );
+
+      assert.equal(
+        activity.entityId,
+        "group_123"
+      );
+
+      assert.equal(
+        activity.groupId,
+        "group_123"
+      );
+
+      assert.equal(
+        activity.readAt,
+        null
+      );
+
+      assert.equal(
+        activity.sourceType,
+        "group_management"
+      );
+    }
   }
 );
