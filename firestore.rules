@@ -118,6 +118,7 @@ service cloud.firestore {
         && onlyKeysChanged([
           'pseudo','pseudoLower',
           'avatar','niveau','notificationsEnabled',
+          'notifLat','notifLng','notifRadiusKm',
           'handedness','playFrequency','goals',
           'profileUpdatedAt',
           'nom','prenom','photoUrl','lat','lng','email',
