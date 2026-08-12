@@ -587,7 +587,10 @@ service cloud.firestore {
       allow read: if signedIn()
         && resource.data.userId == uid();
 
-      allow create, delete: if false;
+      allow create: if false;
+
+      allow delete: if signedIn()
+        && resource.data.userId == uid();
 
       allow update: if signedIn()
         && resource.data.userId == uid()
