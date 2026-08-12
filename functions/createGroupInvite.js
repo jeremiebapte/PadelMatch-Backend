@@ -20,6 +20,10 @@ import {
   validateCreateDirectInviteInput,
 } from "./domain/groups/index.js";
 
+import {
+  createUserActivityRecorder,
+} from "./domain/activity/UserActivityRecorder.js";
+
 function asTrimmedString(value) {
   return typeof value === "string"
     ? value.trim()
@@ -190,6 +194,12 @@ export function buildCreateGroupInvite({
 
   const recordGroupActivity =
     createGroupActivityRecorder({
+      db,
+      logger,
+    });
+
+  const recordUserActivity =
+    createUserActivityRecorder({
       db,
       logger,
     });
@@ -473,7 +483,85 @@ export function buildCreateGroupInvite({
                   }
                 );
 
-              return {
+              const groupName =
+                 asTrimmedString(
+                   group.name ??
+                     group.title
+                 ) || "Groupe Padima";
+
+               const inviterPseudo =
+                 asTrimmedString(
+                   inviterUser.pseudo
+                 ) || "Un joueur";
+
+               await recordUserActivity(
+                 {
+                   userId:
+                     targetUserId,
+
+                   type:
+                     "group_invite_received",
+
+                   entityType:
+                     "invitation",
+
+                   entityId:
+                     inviteRef.id,
+
+                   groupId,
+                   inviteId:
+                     inviteRef.id,
+
+                   actorUid:
+                     uid,
+
+                   actorPseudoSnapshot:
+                     inviterPseudo,
+
+                   ...(asTrimmedString(
+                     inviterUser.avatar ??
+                       inviterUser.photoUrl
+                   )
+                     ? {
+                         actorAvatarSnapshot:
+                           asTrimmedString(
+                             inviterUser.avatar ??
+                               inviterUser.photoUrl
+                           ),
+                       }
+                     : {}),
+
+                   title:
+                     `Invitation à rejoindre ${groupName}`,
+
+                   subtitle:
+                     `${inviterPseudo} t’invite à rejoindre ce groupe.`,
+
+                   sourceType:
+                     "group_activity",
+
+                   sourceId:
+                     activityId,
+
+                   createdAt:
+                     now,
+
+                   metadata: {
+                     groupName,
+                     inviteType:
+                       invite.type,
+                     inviteSource:
+                       invite.source,
+                     expiresAt:
+                       invite.expiresAt,
+                   },
+                 },
+                 {
+                   transaction,
+                 }
+               );
+
+               return {
                 inviteId:
                   inviteRef.id,
                 activityId,

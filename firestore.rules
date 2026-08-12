@@ -576,5 +576,26 @@ service cloud.firestore {
     match /fcmTokens/{userId} {
       allow read, write: if false;
     }
+
+
+    // =========================================================
+    // USER ACTIVITIES — Activity Center V1
+    // Projection personnelle en lecture seule côté client.
+    // Les écritures métier restent exclusivement backend.
+    // =========================================================
+    match /userActivities/{activityId} {
+      allow read: if signedIn()
+        && resource.data.userId == uid();
+
+      allow create, delete: if false;
+
+      allow update: if signedIn()
+        && resource.data.userId == uid()
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(['readAt']);
+    }
   }
+
 }
