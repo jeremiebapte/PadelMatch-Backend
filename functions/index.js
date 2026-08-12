@@ -92,6 +92,10 @@ import {
 } from "./domain/activity/MatchUserActivityService.js";
 
 import {
+  buildNotifyClassicMatchEvent,
+} from "./domain/activity/MatchPushNotificationService.js";
+
+import {
   buildNotifyGroupMatchCreated,
   buildNotifyGroupMatchUpdated,
   buildNotifyGroupMatchCancelled,
@@ -189,6 +193,13 @@ const recordUserActivity =
 const recordMatchUserActivities =
   buildRecordMatchUserActivities({
     recordUserActivity,
+    logger,
+  });
+
+const notifyClassicMatchEvent =
+  buildNotifyClassicMatchEvent({
+    tokensOf,
+    sendVisibleHybrid,
     logger,
   });
 
@@ -4223,6 +4234,75 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
 
   await matchRef.delete();
 
+  try {
+    await recordMatchUserActivities({
+      type:
+        "match_cancelled",
+
+      matchId,
+
+      match,
+
+      actorUid:
+        uid,
+
+      actorProfile,
+
+      sourceId:
+        `delete_match:${matchId}:${uid}`,
+
+      metadata: {
+        source:
+          "delete_match",
+      },
+    });
+  } catch (error) {
+    logger.warn(
+      "deleteMatch user activity ignored failure",
+      {
+        groupId:
+          match.groupId
+          || null,
+
+        matchId,
+        uid,
+
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
+
+  try {
+    await notifyClassicMatchEvent({
+      type:
+        "match_cancelled",
+
+      matchId,
+
+      match,
+
+      actorUid:
+        uid,
+    });
+  } catch (error) {
+    logger.warn(
+      "deleteMatch classic notification ignored failure",
+      {
+        matchId,
+        uid,
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
+
   if (match.groupId) {
     await recordMatchDeleted({
       match,
@@ -4235,48 +4315,6 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
-
-    try {
-      await recordMatchUserActivities({
-        type:
-          "match_cancelled",
-
-        matchId,
-
-        match,
-
-        actorUid:
-          uid,
-
-        actorProfile,
-
-        sourceId:
-          `delete_match:${matchId}:${uid}`,
-
-        metadata: {
-          source:
-            "delete_match",
-        },
-      });
-    } catch (error) {
-      logger.warn(
-        "deleteMatch user activity ignored failure",
-        {
-          groupId:
-            match.groupId
-            || null,
-
-          matchId,
-          uid,
-
-          error:
-            String(
-              error?.message
-              ?? error
-            ),
-        }
-      );
-    }
 
     try {
       await notifyGroupMatchCancelled({
@@ -4539,12 +4577,90 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
 
   await matchRef.set(patch, { merge: true });
 
-  if (existing.groupId) {
-    const updatedMatch = {
-      ...existing,
-      ...patch,
-    };
+  const updatedMatch = {
+    ...existing,
+    ...patch,
+  };
 
+  try {
+    await recordMatchUserActivities({
+      type:
+        "match_updated",
+
+      matchId,
+
+      match:
+        updatedMatch,
+
+      actorUid:
+        uid,
+
+      actorProfile,
+
+      sourceId:
+        `update_match:${matchId}:${uid}`,
+
+      metadata: {
+        source:
+          "update_match",
+
+        changedKeys:
+          Object.keys(patch)
+            .filter(
+              (key) =>
+                key !== "updatedAt"
+            ),
+      },
+    });
+  } catch (error) {
+    logger.warn(
+      "updateMatch user activity ignored failure",
+      {
+        groupId:
+          existing.groupId
+          || null,
+
+        matchId,
+        uid,
+
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
+
+  try {
+    await notifyClassicMatchEvent({
+      type:
+        "match_updated",
+
+      matchId,
+
+      match:
+        updatedMatch,
+
+      actorUid:
+        uid,
+    });
+  } catch (error) {
+    logger.warn(
+      "updateMatch classic notification ignored failure",
+      {
+        matchId,
+        uid,
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
+
+  if (existing.groupId) {
     await recordMatchUpdated({
       match: updatedMatch,
       groupId: existing.groupId,
@@ -4556,56 +4672,6 @@ export const updateMatch = onCall(RUNTIME, async (req) => {
       FieldValue,
       logger,
     });
-
-    try {
-      await recordMatchUserActivities({
-        type:
-          "match_updated",
-
-        matchId,
-
-        match:
-          updatedMatch,
-
-        actorUid:
-          uid,
-
-        actorProfile,
-
-        sourceId:
-          `update_match:${matchId}:${uid}`,
-
-        metadata: {
-          source:
-            "update_match",
-
-          changedKeys:
-            Object.keys(patch)
-              .filter(
-                (key) =>
-                  key !== "updatedAt"
-              ),
-        },
-      });
-    } catch (error) {
-      logger.warn(
-        "updateMatch user activity ignored failure",
-        {
-          groupId:
-            existing.groupId
-            || null,
-
-          matchId,
-          uid,
-
-          error:
-            String(
-              error?.message
-              ?? error
-            ),
-        }
-      );
-    }
 
     try {
       await notifyGroupMatchUpdated({
