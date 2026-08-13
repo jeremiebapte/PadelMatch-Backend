@@ -68,6 +68,10 @@ import {
 } from "./createGroupJoinRequest.js";
 
 import {
+  buildJoinOpenGroup,
+} from "./joinOpenGroup.js";
+
+import {
   buildApproveGroupJoinRequest,
 } from "./approveGroupJoinRequest.js";
 
@@ -6232,6 +6236,17 @@ export const createGroupJoinRequest =
     logger,
     tokensOf,
     sendVisibleHybrid,
+  });
+
+
+export const joinOpenGroup =
+  buildJoinOpenGroup({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
   });
 
 
