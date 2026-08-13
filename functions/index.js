@@ -80,6 +80,10 @@ import {
 } from "./rejectGroupJoinRequest.js";
 
 import {
+  buildListGroupJoinRequests,
+} from "./listGroupJoinRequests.js";
+
+import {
   buildCancelGroupJoinRequest,
 } from "./cancelGroupJoinRequest.js";
 
@@ -6273,6 +6277,16 @@ export const rejectGroupJoinRequest =
     logger,
     tokensOf,
     sendVisibleHybrid,
+  });
+
+
+export const listGroupJoinRequests =
+  buildListGroupJoinRequests({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    logger,
   });
 
 
