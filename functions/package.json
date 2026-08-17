@@ -6,7 +6,9 @@
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "node --test test/domain/activity/*.test.js test/domain/groups/*.test.js test/groups/*.test.js",
+    "test:emulator": "cd .. && firebase emulators:exec --only auth,firestore,functions \"node functions/test-group-participation-emulator.mjs\""
   },
   "engines": {
     "node": "22"
