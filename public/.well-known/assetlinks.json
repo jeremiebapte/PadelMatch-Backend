@@ -7,7 +7,8 @@
       "namespace": "android_app",
       "package_name": "com.bapoto.padelmatch",
       "sha256_cert_fingerprints": [
-        "1B:7D:53:60:BC:45:FA:4F:85:AD:3E:0B:EA:AE:1B:15:16:59:EB:D0:45:6E:CD:62:2B:23:D6:AA:88:C7:E1:2A"
+        "1B:7D:53:60:BC:45:FA:4F:85:AD:3E:0B:EA:AE:1B:15:16:59:EB:D0:45:6E:CD:62:2B:23:D6:AA:88:C7:E1:2A",
+        "6C:C7:DB:38:67:9A:C1:72:F2:6F:C1:5C:ED:1F:C2:C6:04:05:3C:04:2C:4B:23:A5:D8:3D:C0:DC:1D:CD:6C:26"
       ]
     }
   }
