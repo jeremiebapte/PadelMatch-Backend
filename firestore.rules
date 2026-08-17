@@ -430,6 +430,14 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /users/{userId}/blockedUsers/{blockedUserId} {
+      allow get, list: if signedIn()
+        && userId == uid();
+
+      allow create, update, delete: if signedIn()
+        && userId == uid();
+    }
+
     match /messages/{messageId} {
 
       /*
@@ -485,8 +493,12 @@ service cloud.firestore {
        */
       allow get, list: if signedIn()
         && (
-          canReadGroupMessage(resource.data)
-          || canReadMatchMessage(resource.data)
+          resource.data.senderUid == uid()
+          || (
+            resource.data.receiverUid is string
+            && resource.data.receiverUid == uid()
+          )
+          || canReadGroupMessage(resource.data)
         );
 
       /*
@@ -520,25 +532,46 @@ service cloud.firestore {
 
       /*
        * Modification :
-       * - uniquement l'auteur ;
-       * - uniquement le texte et les métadonnées d'édition ;
-       * - le contexte, l'auteur et la date d'origine restent immuables.
+       * - l'auteur peut éditer uniquement le contenu prévu ;
+       * - pour un message privé de match, le destinataire peut uniquement
+       *   ajouter/modifier readAt afin de gérer l'état lu/non lu ;
+       * - aucun champ de contexte ou d'identité ne peut être altéré.
        */
       allow update: if signedIn()
-        && resource.data.senderUid == uid()
-        && request.resource.data.senderUid == resource.data.senderUid
-        && request.resource.data.diff(resource.data)
-             .changedKeys()
-             .hasOnly([
-               'text',
-               'edited',
-               'editedAt'
-             ])
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
         && (
-          canReadMatchMessage(resource.data)
-          || canReadGroupMessage(resource.data)
+          (
+            resource.data.senderUid == uid()
+            && request.resource.data.senderUid
+                 == resource.data.senderUid
+            && request.resource.data.diff(resource.data)
+                 .changedKeys()
+                 .hasOnly([
+                   'text',
+                   'edited',
+                   'editedAt'
+                 ])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && (
+              canReadMatchMessage(resource.data)
+              || canReadGroupMessage(resource.data)
+            )
+          )
+          ||
+          (
+            isMatchMessage(resource.data)
+            && resource.data.receiverUid == uid()
+            && request.resource.data.senderUid
+                 == resource.data.senderUid
+            && request.resource.data.receiverUid
+                 == resource.data.receiverUid
+            && request.resource.data.matchId
+                 == resource.data.matchId
+            && request.resource.data.diff(resource.data)
+                 .affectedKeys()
+                 .hasOnly(['readAt'])
+            && request.resource.data.readAt == request.time
+          )
         );
 
       /*
