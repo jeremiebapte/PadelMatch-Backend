@@ -117,7 +117,7 @@ service cloud.firestore {
       allow update: if signedIn() && userId == uid()
         && onlyKeysChanged([
           'pseudo','pseudoLower',
-          'avatar','niveau','notificationsEnabled',
+          'avatar','niveau','level','notificationsEnabled',
           'notifLat','notifLng','notifRadiusKm',
           'handedness','playFrequency','goals',
           'profileUpdatedAt',
