@@ -71,6 +71,14 @@
       {
         "source": "/group/invite/**",
         "destination": "/index.html"
+      },
+      {
+        "source": "/match",
+        "destination": "/match.html"
+      },
+      {
+        "source": "/match/**",
+        "destination": "/match.html"
       }
     ]
   },

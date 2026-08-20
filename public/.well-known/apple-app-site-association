@@ -6,7 +6,9 @@
         "appID": "WADRG42PZF.com.bapoto.PadelMatch",
         "paths": [
           "/group/invite",
-          "/group/invite/*"
+          "/group/invite/*",
+          "/match",
+          "/match/*"
         ]
       }
     ]
