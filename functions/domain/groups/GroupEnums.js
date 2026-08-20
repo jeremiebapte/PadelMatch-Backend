@@ -109,6 +109,7 @@ export const GroupActivityType = Object.freeze({
   MEMBER_REMOVED: "member_removed",
   MEMBER_BANNED: "member_banned",
   MEMBER_ROLE_CHANGED: "member_role_changed",
+  OWNERSHIP_TRANSFERRED: "ownership_transferred",
   MATCH_CREATED: "match_created",
   MATCH_UPDATED: "match_updated",
   MATCH_JOINED: "match_joined",

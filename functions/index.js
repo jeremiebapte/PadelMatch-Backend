@@ -128,6 +128,7 @@ import {
 
 import {
   createGroupActivityRecorder,
+  buildHandleUserGroupOwnershipLifecycle,
   recordMatchCreated,
   recordMatchUpdated,
   recordMatchDeleted,
@@ -196,6 +197,16 @@ const recordUserActivity =
   createUserActivityRecorder({
     db,
     logger,
+  });
+
+const handleUserGroupOwnershipLifecycle =
+  buildHandleUserGroupOwnershipLifecycle({
+    db,
+    FieldValue,
+    logger,
+    recordGroupActivity,
+    recordUserActivity,
+    authAdmin,
   });
 
 const recordMatchUserActivities =
@@ -6060,11 +6071,50 @@ export const broadcastMarketing = onCall(RUNTIME, async (req) => {
 });
 
 
+async function resolveGroupOwnershipBeforeAccountDeletion(
+  uid,
+  source
+) {
+  try {
+    return await handleUserGroupOwnershipLifecycle(
+      uid
+    );
+  } catch (error) {
+    logger.error(
+      "account deletion blocked: group owner lifecycle failed",
+      {
+        uid,
+        source,
+        code:
+          error?.code
+          || error?.name
+          || "UNKNOWN_ERROR",
+        message:
+          String(
+            error?.message
+            || error
+          ),
+      }
+    );
+
+    throw new HttpsError(
+      "internal",
+      "GROUP_OWNER_LIFECYCLE_FAILED"
+    );
+  }
+}
+
+
 // ======================================================
 // DELETE ACCOUNT — compat prod
 // ======================================================
 export const deleteAccount = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
+
+  await resolveGroupOwnershipBeforeAccountDeletion(
+    uid,
+    "deleteAccount"
+  );
 
   try {
     const userRef = db.collection("users").doc(uid);
@@ -6102,6 +6152,11 @@ export const deleteUserAccount = onCall(RUNTIME, async (req) => {
   if (!targetUid) {
     throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: uid missing");
   }
+
+  await resolveGroupOwnershipBeforeAccountDeletion(
+    targetUid,
+    "deleteUserAccount"
+  );
 
   try {
     const userRef = db.collection("users").doc(targetUid);
