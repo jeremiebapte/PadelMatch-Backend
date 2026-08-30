@@ -108,6 +108,7 @@ function validateCreateMatchInput(
   const joueursManquants =
     data?.joueursManquants === 1
     || data?.joueursManquants === 2
+    || data?.joueursManquants === 3
       ? data.joueursManquants
       : null;
 
@@ -177,7 +178,7 @@ function validateCreateMatchInput(
   if (joueursManquants === null) {
     throw new HttpsError(
       "invalid-argument",
-      "INVALID_ARGUMENT: joueursManquants must be 1 or 2"
+      "INVALID_ARGUMENT: joueursManquants must be 1, 2 or 3"
     );
   }
 
@@ -473,7 +474,7 @@ async function validateScheduling({
 }
 
 
-function buildParticipants(
+export function buildParticipants(
   uid,
   joueursManquants
 ) {
@@ -484,7 +485,7 @@ function buildParticipants(
       `ami_de_${uid}:Joueur 1`,
       `ami_de_${uid}:Joueur 2`
     );
-  } else {
+  } else if (joueursManquants === 2) {
     participants.push(
       `ami_de_${uid}:Joueur 1`
     );
