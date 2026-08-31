@@ -13,6 +13,10 @@ import {
   Timestamp,
 } from "firebase-admin/firestore";
 
+import {
+  buildPlayerPairKey,
+} from "./domain/playerInvites/index.js";
+
 
 const PROJECT_ID =
   "padelmatch-32186";
@@ -87,9 +91,10 @@ const invitationId =
   `invite_${suffix}`;
 
 const pairKey =
-  [A.uid, B.uid]
-    .sort()
-    .join("_");
+  buildPlayerPairKey(
+      A.uid,
+      B.uid
+    );
 
 const conversationId =
   pairKey;

@@ -60,7 +60,7 @@ test(
         "uidB",
         "uidA"
       ),
-      "uidA_uidB"
+      "4:uidA4:uidB"
     );
 
     assert.equal(
@@ -68,7 +68,47 @@ test(
         "uidA",
         "uidB"
       ),
-      "uidA_uidB"
+      "4:uidA4:uidB"
+    );
+  }
+);
+
+
+test(
+  "pairKey ne collisionne pas avec des underscores",
+  () => {
+    const first =
+      buildPlayerPairKey(
+        "a_b",
+        "c"
+      );
+
+    const second =
+      buildPlayerPairKey(
+        "a",
+        "b_c"
+      );
+
+    assert.notEqual(
+      first,
+      second
+    );
+  }
+);
+
+
+test(
+  "pairKey encode les caractères interdits dans un document id",
+  () => {
+    const key =
+      buildPlayerPairKey(
+        "uid/a",
+        "uid/b"
+      );
+
+    assert.equal(
+      key.includes("/"),
+      false
     );
   }
 );

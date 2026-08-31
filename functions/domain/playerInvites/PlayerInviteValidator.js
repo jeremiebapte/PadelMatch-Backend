@@ -80,9 +80,32 @@ export function buildPlayerPairKey(
     );
   }
 
-  return [a, b]
-    .sort()
-    .join("_");
+  const [first, second] =
+    [a, b].sort();
+
+  /*
+   * Collision-safe + Firestore-path-safe.
+   *
+   * On encode d'abord chaque UID afin qu'un éventuel "/"
+   * ne puisse jamais devenir un séparateur de document.
+   *
+   * Le préfixe de longueur rend la concaténation
+   * non ambiguë même si les UIDs contiennent ":" ou "_".
+   */
+  const encodedFirst =
+    encodeURIComponent(first);
+
+  const encodedSecond =
+    encodeURIComponent(second);
+
+  return [
+    encodedFirst.length,
+    ":",
+    encodedFirst,
+    encodedSecond.length,
+    ":",
+    encodedSecond,
+  ].join("");
 }
 
 

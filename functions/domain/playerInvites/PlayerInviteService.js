@@ -271,6 +271,9 @@ export function buildCreatePlayerInvite({
           );
         }
 
+        let staleInvitationRef = null;
+        let staleInvitationSnap = null;
+
         if (pairSnap.exists) {
           const activePair =
             pairSnap.data() ?? {};
@@ -279,19 +282,136 @@ export function buildCreatePlayerInvite({
             activePair.status
             === PlayerInviteStatus.PENDING
           ) {
-            throw new PlayerInviteServiceError(
-              "PLAYER_INVITE_ALREADY_PENDING"
+            const activeInvitationId =
+              typeof activePair.invitationId
+                === "string"
+                ? activePair.invitationId.trim()
+                : "";
+
+            /*
+             * Un verrou pending normal pointe toujours
+             * vers l'invitation qu'il protège.
+             *
+             * On relit cette invitation AVANT toute écriture
+             * afin de respecter les contraintes transactionnelles
+             * Firestore.
+             */
+            if (activeInvitationId) {
+              staleInvitationRef =
+                db
+                  .collection(
+                    "playerInvitations"
+                  )
+                  .doc(
+                    activeInvitationId
+                  );
+
+              staleInvitationSnap =
+                await tx.get(
+                  staleInvitationRef
+                );
+            }
+
+            const staleInvitation =
+              staleInvitationSnap?.exists
+                ? (
+                    staleInvitationSnap
+                      .data()
+                    ?? {}
+                  )
+                : {};
+
+            const pairExpiryMillis =
+              activePair.expiresAt
+              && typeof activePair
+                .expiresAt
+                .toMillis
+                === "function"
+                ? activePair
+                    .expiresAt
+                    .toMillis()
+                : null;
+
+            const invitationExpiryMillis =
+              staleInvitation.expiresAt
+              && typeof staleInvitation
+                .expiresAt
+                .toMillis
+                === "function"
+                ? staleInvitation
+                    .expiresAt
+                    .toMillis()
+                : null;
+
+            const activeExpiryMillis =
+              pairExpiryMillis
+              ?? invitationExpiryMillis;
+
+            /*
+             * En l'absence d'une expiration exploitable,
+             * on reste conservateur : on considère le verrou
+             * actif afin de ne jamais créer deux invitations
+             * pending simultanément.
+             */
+            if (
+              activeExpiryMillis === null
+              || activeExpiryMillis
+                > createdAtMillis
+            ) {
+              throw new PlayerInviteServiceError(
+                "PLAYER_INVITE_ALREADY_PENDING"
+              );
+            }
+
+            /*
+             * Le verrou est expiré.
+             *
+             * Si l'ancienne invitation est encore pending
+             * et correspond bien à cette paire, on la ferme
+             * proprement en "expired".
+             */
+            if (
+              staleInvitationSnap?.exists
+              && staleInvitation.status
+                === PlayerInviteStatus.PENDING
+              && staleInvitation.pairKey
+                === pairKey
+            ) {
+              tx.update(
+                staleInvitationRef,
+                {
+                  status:
+                    PlayerInviteStatus.EXPIRED,
+
+                  updatedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                }
+              );
+            }
+
+            /*
+             * Le nouveau tx.create(pairRef, ...)
+             * remplacera logiquement ce verrou.
+             *
+             * Comme le document existe encore,
+             * on le supprime d'abord puis on le recrée
+             * dans la même transaction.
+             */
+            tx.delete(
+              pairRef
+            );
+
+          } else {
+            /*
+             * Filet de sécurité :
+             * un verrou résiduel non pending ne doit
+             * pas empêcher définitivement la paire.
+             */
+            tx.delete(
+              pairRef
             );
           }
-
-          /*
-           * Filet de sécurité :
-           * un verrou résiduel non pending ne doit
-           * pas empêcher définitivement la paire.
-           */
-          tx.delete(
-            pairRef
-          );
         }
 
         const invitation = {
@@ -391,7 +511,7 @@ export function buildCreatePlayerInvite({
           invitation
         );
 
-        tx.create(
+        tx.set(
           pairRef,
           pairLock
         );

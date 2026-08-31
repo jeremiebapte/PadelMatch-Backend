@@ -13,6 +13,10 @@ import {
   Timestamp,
 } from "firebase-admin/firestore";
 
+import {
+  buildPlayerPairKey,
+} from "./domain/playerInvites/index.js";
+
 
 const PROJECT_ID =
   "padelmatch-32186";
@@ -386,9 +390,10 @@ try {
 
 
   const pairKeyAB =
-    [A.uid, B.uid]
-      .sort()
-      .join("_");
+    buildPlayerPairKey(
+      A.uid,
+      B.uid
+    );
 
 
   const conversation =
@@ -524,9 +529,10 @@ try {
 
 
   const pairKeyAC =
-    [A.uid, C.uid]
-      .sort()
-      .join("_");
+    buildPlayerPairKey(
+      A.uid,
+      C.uid
+    );
 
 
   const lockAfterDecline =

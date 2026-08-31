@@ -13,6 +13,10 @@ import {
   Timestamp,
 } from "firebase-admin/firestore";
 
+import {
+  buildPlayerPairKey,
+} from "./domain/playerInvites/index.js";
+
 
 const PROJECT_ID =
   "padelmatch-32186";
@@ -329,14 +333,16 @@ async function cleanup() {
   }
 
   const pairAB =
-    [A.uid, B.uid]
-      .sort()
-      .join("_");
+    buildPlayerPairKey(
+      A.uid,
+      B.uid
+    );
 
   const pairAC =
-    [A.uid, C.uid]
-      .sort()
-      .join("_");
+    buildPlayerPairKey(
+      A.uid,
+      C.uid
+    );
 
   await Promise.all([
     db
@@ -594,9 +600,10 @@ try {
   // ========================================================
 
   const pairKey =
-    [A.uid, B.uid]
-      .sort()
-      .join("_");
+    buildPlayerPairKey(
+      A.uid,
+      B.uid
+    );
 
 
   assert.equal(
@@ -789,6 +796,142 @@ try {
 
 
   console.log();
+  // ========================================================
+  // TEST — pending expiré est recyclé
+  // ========================================================
+
+  const expiryPairKey =
+    buildPlayerPairKey(
+      A.uid,
+      B.uid
+    );
+
+  const currentPairSnap =
+    await db
+      .collection(
+        "activePlayerInvitePairs"
+      )
+      .doc(
+        expiryPairKey
+      )
+      .get();
+
+  if (currentPairSnap.exists) {
+    const oldInviteId =
+      currentPairSnap
+        .data()
+        .invitationId;
+
+    await Promise.all([
+      db
+        .collection(
+          "activePlayerInvitePairs"
+        )
+        .doc(
+          expiryPairKey
+        )
+        .set(
+          {
+            expiresAt:
+              Timestamp
+                .fromMillis(
+                  Date.now() - 60_000
+                ),
+          },
+          {
+            merge: true,
+          }
+        ),
+
+      db
+        .collection(
+          "playerInvitations"
+        )
+        .doc(
+          oldInviteId
+        )
+        .set(
+          {
+            status: "pending",
+
+            expiresAt:
+              Timestamp
+                .fromMillis(
+                  Date.now() - 60_000
+                ),
+          },
+          {
+            merge: true,
+          }
+        ),
+    ]);
+
+    const replacement =
+      await callCreatePlayerInvite(
+        tokenB,
+        {
+          inviteeUid:
+            A.uid,
+
+          scheduleKind:
+            "flexible",
+
+          timePreference:
+            "any",
+        }
+      );
+
+    assert.equal(
+      replacement.response.ok,
+      true,
+      JSON.stringify(
+        replacement.payload
+      )
+    );
+
+    const oldInviteSnap =
+      await db
+        .collection(
+          "playerInvitations"
+        )
+        .doc(
+          oldInviteId
+        )
+        .get();
+
+    assert.equal(
+      oldInviteSnap
+        .data()
+        .status,
+      "expired"
+    );
+
+    const replacementPairSnap =
+      await db
+        .collection(
+          "activePlayerInvitePairs"
+        )
+        .doc(
+          expiryPairKey
+        )
+        .get();
+
+    assert.equal(
+      replacementPairSnap
+        .data()
+        .invitationId,
+      replacement
+        .payload
+        .result
+        .invitationId
+    );
+
+    pass(
+      "pending expiré est fermé puis remplacé"
+    );
+  }
+
+
   console.log(
     `${passed} tests Player Invite Emulator PASS`
   );
