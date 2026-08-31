@@ -108,6 +108,21 @@ service cloud.firestore {
         || data.profileUpdatedAt is timestamp;
     }
 
+    function hasValidOptionalPlayerPrivacy(data) {
+      return (
+          !('isPublicProfile' in data)
+          || data.isPublicProfile is bool
+        )
+        && (
+          !('isDiscoverable' in data)
+          || data.isDiscoverable is bool
+        )
+        && (
+          !('privacyUpdatedAt' in data)
+          || data.privacyUpdatedAt is timestamp
+        );
+    }
+
     match /users/{userId} {
       allow get, list: if signedIn();
       allow create: if signedIn()
@@ -121,6 +136,7 @@ service cloud.firestore {
           'notifLat','notifLng','notifRadiusKm',
           'handedness','playFrequency','goals',
           'profileUpdatedAt',
+          'isPublicProfile','isDiscoverable','privacyUpdatedAt',
           'nom','prenom','photoUrl','lat','lng','email',
           'createdAt','updatedAt',
           'fcmToken','fcmPlatform','fcmUpdatedAt',
@@ -140,6 +156,9 @@ service cloud.firestore {
           request.resource.data
         )
         && hasValidOptionalProfileUpdatedAt(
+          request.resource.data
+        )
+        && hasValidOptionalPlayerPrivacy(
           request.resource.data
         );
       allow delete: if signedIn() && userId == uid();
