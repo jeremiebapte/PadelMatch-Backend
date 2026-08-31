@@ -260,6 +260,58 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // =========================================================
+    // PLAYER INVITATIONS — Inviter à jouer V1
+    //
+    // Source métier écrite exclusivement par Cloud Functions.
+    // Les deux joueurs concernés peuvent lire l'invitation.
+    // Aucun client ne peut créer/modifier/supprimer directement.
+    // =========================================================
+    match /playerInvitations/{invitationId} {
+      allow get, list: if signedIn()
+        && (
+          (
+            resource.data.inviterUid is string
+            && resource.data.inviterUid == uid()
+          )
+          ||
+          (
+            resource.data.inviteeUid is string
+            && resource.data.inviteeUid == uid()
+          )
+        );
+
+      allow create, update, delete: if false;
+    }
+
+
+    // =========================================================
+    // ACTIVE PLAYER INVITE PAIRS
+    //
+    // Verrou technique anti-doublon.
+    // Backend uniquement, jamais exposé aux clients.
+    // =========================================================
+    match /activePlayerInvitePairs/{pairKey} {
+      allow read, write: if false;
+    }
+
+
+    // =========================================================
+    // PLAYER CONVERSATIONS
+    //
+    // Relation privée créée par acceptPlayerInvite.
+    // Lecture uniquement pour les participants.
+    // Écriture exclusivement backend dans cette V1.
+    // =========================================================
+    match /playerConversations/{conversationId} {
+      allow get, list: if signedIn()
+        && resource.data.participantUids is list
+        && uid() in resource.data.participantUids;
+
+      allow create, update, delete: if false;
+    }
+
+
     match /groupInvites/{inviteId} {
       /*
        * Lecture autorisée :
@@ -487,6 +539,40 @@ service cloud.firestore {
           );
       }
 
+      function isPlayerMessage(data) {
+        return data.conversationType == 'player'
+          && data.conversationId is string
+          && data.senderUid is string
+          && data.receiverUid is string;
+      }
+
+      function playerConversation(data) {
+        return get(
+          /databases/$(database)/documents/playerConversations/$(data.conversationId)
+        );
+      }
+
+      function hasActivePlayerConversation(data) {
+        return isPlayerMessage(data)
+          && exists(
+            /databases/$(database)/documents/playerConversations/$(data.conversationId)
+          )
+          && playerConversation(data).data.status == 'active'
+          && playerConversation(data).data.participantUids is list
+          && playerConversation(data).data.participantUids.size() == 2
+          && data.senderUid in playerConversation(data).data.participantUids
+          && data.receiverUid in playerConversation(data).data.participantUids
+          && data.senderUid != data.receiverUid;
+      }
+
+      function canReadPlayerMessage(data) {
+        return hasActivePlayerConversation(data)
+          && (
+            data.senderUid == uid()
+            || data.receiverUid == uid()
+          );
+      }
+
       function hasValidMessageTimestamp(data) {
         return data.timestamp is timestamp
           || data.timestamp is int
@@ -519,6 +605,7 @@ service cloud.firestore {
             && resource.data.receiverUid == uid()
           )
           || canReadGroupMessage(resource.data)
+          || canReadPlayerMessage(resource.data)
         );
 
       /*
@@ -551,6 +638,25 @@ service cloud.firestore {
         );
 
       /*
+       * Création d'un message Player.
+       *
+       * Le chat n'existe qu'après acceptation :
+       * playerConversations/{conversationId} doit être active
+       * et contenir exactement sender + receiver.
+       */
+      allow create: if signedIn()
+        && request.resource.data.senderUid == uid()
+        && request.resource.data.conversationType == 'player'
+        && request.resource.data.conversationId is string
+        && request.resource.data.receiverUid is string
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && hasValidMessageTimestamp(request.resource.data)
+        && hasActivePlayerConversation(
+          request.resource.data
+        );
+
+      /*
        * Modification :
        * - l'auteur peut éditer uniquement le contenu prévu ;
        * - pour un message privé de match, le destinataire peut uniquement
@@ -575,6 +681,7 @@ service cloud.firestore {
             && (
               canReadMatchMessage(resource.data)
               || canReadGroupMessage(resource.data)
+              || canReadPlayerMessage(resource.data)
             )
           )
           ||
@@ -587,6 +694,23 @@ service cloud.firestore {
                  == resource.data.receiverUid
             && request.resource.data.matchId
                  == resource.data.matchId
+            && request.resource.data.diff(resource.data)
+                 .affectedKeys()
+                 .hasOnly(['readAt'])
+            && request.resource.data.readAt == request.time
+          )
+          ||
+          (
+            canReadPlayerMessage(resource.data)
+            && resource.data.receiverUid == uid()
+            && request.resource.data.senderUid
+                 == resource.data.senderUid
+            && request.resource.data.receiverUid
+                 == resource.data.receiverUid
+            && request.resource.data.conversationType
+                 == resource.data.conversationType
+            && request.resource.data.conversationId
+                 == resource.data.conversationId
             && request.resource.data.diff(resource.data)
                  .affectedKeys()
                  .hasOnly(['readAt'])
@@ -617,6 +741,11 @@ service cloud.firestore {
               resource.data.senderUid == uid()
               || resource.data.receiverUid == uid()
             )
+          )
+          ||
+          (
+            canReadPlayerMessage(resource.data)
+            && resource.data.senderUid == uid()
           )
         );
     }

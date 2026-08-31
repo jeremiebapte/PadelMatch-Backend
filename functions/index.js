@@ -37,6 +37,20 @@ import {
   buildCreateGroup,
 } from "./createGroup.js";
 
+import {
+  buildCreatePlayerInviteCallable,
+} from "./createPlayerInvite.js";
+
+import {
+  buildPlayerInviteEngagementService,
+} from "./domain/playerInvites/PlayerInviteEngagementService.js";
+
+import {
+  buildAcceptPlayerInviteCallable,
+  buildDeclinePlayerInviteCallable,
+  buildCancelPlayerInviteCallable,
+} from "./playerInviteActions.js";
+
 
 
 import {
@@ -196,6 +210,16 @@ const recordGroupActivity =
 const recordUserActivity =
   createUserActivityRecorder({
     db,
+    logger,
+  });
+
+
+const playerInviteEngagement =
+  buildPlayerInviteEngagementService({
+    db,
+    recordUserActivity,
+    tokensOf,
+    sendVisibleHybrid,
     logger,
   });
 
@@ -5243,6 +5267,12 @@ export const notifyOnNewMessage = onDocumentCreated(
     const matchId =
       asString(msg.matchId);
 
+    const conversationType =
+      asString(msg.conversationType);
+
+    const conversationId =
+      asString(msg.conversationId);
+
     const text =
       asString(msg.text);
 
@@ -5270,6 +5300,162 @@ export const notifyOnNewMessage = onDocumentCreated(
           }
         );
       }
+
+      return null;
+    }
+
+    if (
+      conversationType === "player"
+      && conversationId
+      && receiverUid
+    ) {
+      if (
+        senderUid
+        && senderUid === receiverUid
+      ) {
+        return null;
+      }
+
+      const conversationRef =
+        db
+          .collection("playerConversations")
+          .doc(conversationId);
+
+      const conversationSnap =
+        await conversationRef.get();
+
+      if (!conversationSnap.exists) {
+        logger.warn(
+          "player chat notification ignored: conversation missing",
+          {
+            conversationId,
+            messageId,
+          }
+        );
+
+        return null;
+      }
+
+      const conversation =
+        conversationSnap.data() || {};
+
+      const participants =
+        Array.isArray(
+          conversation.participantUids
+        )
+          ? conversation.participantUids
+              .map(asString)
+              .filter(Boolean)
+          : [];
+
+      if (
+        conversation.status !== "active"
+        || participants.length !== 2
+        || !participants.includes(senderUid)
+        || !participants.includes(receiverUid)
+      ) {
+        logger.warn(
+          "player chat notification ignored: invalid conversation",
+          {
+            conversationId,
+            senderUid,
+            receiverUid,
+            messageId,
+          }
+        );
+
+        return null;
+      }
+
+      try {
+        await conversationRef.set(
+          {
+            updatedAt:
+              FieldValue.serverTimestamp(),
+
+            lastMessageAt:
+              FieldValue.serverTimestamp(),
+
+            lastMessageTextSnapshot:
+              text
+                ? text.slice(0, 120)
+                : "",
+          },
+          {
+            merge: true,
+          }
+        );
+      } catch (error) {
+        logger.warn(
+          "player conversation snapshot update failed",
+          {
+            conversationId,
+            messageId,
+            error:
+              String(
+                error?.message
+                ?? error
+              ),
+          }
+        );
+      }
+
+      const tokens =
+        await tokensOf(
+          receiverUid
+        );
+
+      if (!tokens.length) {
+        return null;
+      }
+
+      const copy =
+        copyFor(
+          "chat",
+          "message",
+          {
+            preview:
+              text
+                ? text.slice(0, 120)
+                : "Message reçu",
+          }
+        );
+
+      await sendChatHybrid(
+        tokens,
+        {
+          title:
+            copy.title,
+
+          body:
+            copy.body,
+
+          data: {
+            type:
+              "chat",
+
+            subtype:
+              "player_message",
+
+            conversationType:
+              "player",
+
+            conversationId,
+
+            senderUid:
+              senderUid || "",
+
+            otherUid:
+              senderUid || "",
+
+            title:
+              copy.title,
+
+            body:
+              copy.body,
+          },
+        }
+      );
 
       return null;
     }
@@ -6225,6 +6411,59 @@ export const getClubActivityFeed =
     db,
   });
 
+
+
+
+// ======================================================
+// PLAYER INVITE TO PLAY V1
+// CALLABLE — createPlayerInvite
+// ======================================================
+export const createPlayerInvite =
+  onCall(
+    RUNTIME,
+    buildCreatePlayerInviteCallable({
+      db,
+
+      onInvitationCreated:
+        playerInviteEngagement
+          .invitationReceived,
+    })
+  );
+
+
+export const acceptPlayerInvite =
+  onCall(
+    RUNTIME,
+    buildAcceptPlayerInviteCallable({
+      db,
+
+      onInvitationAccepted:
+        playerInviteEngagement
+          .invitationAccepted,
+    })
+  );
+
+
+export const declinePlayerInvite =
+  onCall(
+    RUNTIME,
+    buildDeclinePlayerInviteCallable({
+      db,
+
+      onInvitationDeclined:
+        playerInviteEngagement
+          .invitationDeclined,
+    })
+  );
+
+
+export const cancelPlayerInvite =
+  onCall(
+    RUNTIME,
+    buildCancelPlayerInviteCallable({
+      db,
+    })
+  );
 
 
 export const getGroupInvitePreview =
