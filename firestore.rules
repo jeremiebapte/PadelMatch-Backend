@@ -137,7 +137,8 @@ service cloud.firestore {
           'handedness','playFrequency','goals',
           'profileUpdatedAt',
           'isPublicProfile','isDiscoverable','privacyUpdatedAt',
-          'nom','prenom','photoUrl','lat','lng','email',
+          'lat','lng','locationUpdatedAt',
+          'nom','prenom','photoUrl','email',
           'createdAt','updatedAt',
           'fcmToken','fcmPlatform','fcmUpdatedAt',
           'onboardingCompleted','onboardingCompletedAt'
