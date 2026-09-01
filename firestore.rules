@@ -304,9 +304,32 @@ service cloud.firestore {
     // Écriture exclusivement backend dans cette V1.
     // =========================================================
     match /playerConversations/{conversationId} {
-      allow get, list: if signedIn()
+      /*
+       * Lecture directe :
+       * le document lui-même prouve l'appartenance.
+       */
+      allow get: if signedIn()
         && resource.data.participantUids is list
         && uid() in resource.data.participantUids;
+
+      /*
+       * Listing :
+       * Firestore doit pouvoir prouver l'autorisation
+       * à partir des contraintes de la query.
+       *
+       * Les clients utilisent donc exclusivement :
+       *
+       * participantAUid == uid()
+       * OU
+       * participantBUid == uid()
+       *
+       * via deux queries séparées ensuite fusionnées.
+       */
+      allow list: if signedIn()
+        && (
+          resource.data.participantAUid == uid()
+          || resource.data.participantBUid == uid()
+        );
 
       allow create, update, delete: if false;
     }

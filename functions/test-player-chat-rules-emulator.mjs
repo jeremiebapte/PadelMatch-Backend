@@ -331,6 +331,14 @@ try {
       participantUids:
         [A.uid, B.uid].sort(),
 
+      participantAUid:
+        [A.uid, B.uid]
+          .sort()[0],
+
+      participantBUid:
+        [A.uid, B.uid]
+          .sort()[1],
+
       participantPairKey:
         conversationId,
 

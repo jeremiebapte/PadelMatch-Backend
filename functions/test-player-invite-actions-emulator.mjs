@@ -411,12 +411,32 @@ try {
   );
 
 
+  const expectedParticipants =
+    [A.uid, B.uid]
+      .sort();
+
+
   assert.deepEqual(
     conversation
       .data()
       .participantUids,
-    [A.uid, B.uid]
-      .sort()
+    expectedParticipants
+  );
+
+
+  assert.equal(
+    conversation
+      .data()
+      .participantAUid,
+    expectedParticipants[0]
+  );
+
+
+  assert.equal(
+    conversation
+      .data()
+      .participantBUid,
+    expectedParticipants[1]
   );
 
 

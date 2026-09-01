@@ -740,6 +740,12 @@ export function buildAcceptPlayerInvite({
             );
           }
 
+          const [
+            participantAUid,
+            participantBUid,
+          ] =
+            participantUids;
+
           if (
             !conversationSnap.exists
           ) {
@@ -756,6 +762,10 @@ export function buildAcceptPlayerInvite({
                   pairKey,
 
                 participantUids,
+
+                participantAUid,
+
+                participantBUid,
 
                 source:
                   "playerInvite",
@@ -812,6 +822,12 @@ export function buildAcceptPlayerInvite({
               {
                 status:
                   "active",
+
+                participantUids,
+
+                participantAUid,
+
+                participantBUid,
 
                 updatedAt:
                   FieldValue.serverTimestamp(),

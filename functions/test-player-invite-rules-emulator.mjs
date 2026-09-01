@@ -207,6 +207,54 @@ async function firestoreGet(
 }
 
 
+
+async function firestoreRunQuery(
+  token,
+  structuredQuery
+) {
+  const response =
+    await fetch(
+      `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`,
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          Authorization:
+            `Bearer ${token}`,
+        },
+
+        body:
+          JSON.stringify({
+            structuredQuery,
+          }),
+      }
+    );
+
+  const payload =
+    await response.text();
+
+  if (!response.ok) {
+    const error =
+      new Error(
+        `Firestore runQuery ${response.status}: ${payload}`
+      );
+
+    error.status =
+      response.status;
+
+    throw error;
+  }
+
+  return payload
+    ? JSON.parse(payload)
+    : [];
+}
+
+
 async function firestoreCommit(
   token,
   writes
@@ -264,6 +312,42 @@ async function expectAllowed(
   }
 
   pass(label);
+}
+
+
+
+async function expectQueryAllowed(
+  label,
+  action
+) {
+  await action();
+  pass(label);
+}
+
+
+async function expectQueryDenied(
+  label,
+  action
+) {
+  try {
+    await action();
+  } catch (error) {
+    if (
+      error?.status === 403
+      || String(
+        error?.message ?? ""
+      ).includes("403")
+    ) {
+      pass(label);
+      return;
+    }
+
+    throw error;
+  }
+
+  throw new Error(
+    `${label} aurait dû être refusé`
+  );
 }
 
 
@@ -378,6 +462,14 @@ try {
           A.uid,
           B.uid,
         ].sort(),
+
+      participantAUid:
+        [A.uid, B.uid]
+          .sort()[0],
+
+      participantBUid:
+        [A.uid, B.uid]
+          .sort()[1],
 
       participantPairKey:
         pairKey,
@@ -606,6 +698,181 @@ try {
       firestoreGet(
         tokenC,
         `playerConversations/${conversationId}`
+      )
+  );
+
+
+
+  // ========================================================
+  // PLAYER CONVERSATIONS — QUERY LIST
+  // ========================================================
+
+  const sortedParticipantUids =
+    [A.uid, B.uid].sort();
+
+  const participantAUid =
+    sortedParticipantUids[0];
+
+  const participantBUid =
+    sortedParticipantUids[1];
+
+
+  await expectQueryAllowed(
+    "participant A peut lister via participantAUid",
+    async () => {
+      const rows =
+        await firestoreRunQuery(
+          tokenA,
+          {
+            from: [
+              {
+                collectionId:
+                  "playerConversations",
+              },
+            ],
+
+            where: {
+              fieldFilter: {
+                field: {
+                  fieldPath:
+                    "participantAUid",
+                },
+
+                op:
+                  "EQUAL",
+
+                value: {
+                  stringValue:
+                    A.uid,
+                },
+              },
+            },
+          }
+        );
+
+      if (participantAUid !== A.uid) {
+        throw new Error(
+          "Fixture inattendue : A n'est pas participantAUid."
+        );
+      }
+
+      const ids =
+        rows
+          .map(
+            (row) =>
+              row.document?.name
+          )
+          .filter(Boolean);
+
+      if (
+        !ids.some(
+          (name) =>
+            name.endsWith(
+              `/playerConversations/${conversationId}`
+            )
+        )
+      ) {
+        throw new Error(
+          "Conversation A/B absente de la query participantAUid."
+        );
+      }
+    }
+  );
+
+
+  await expectQueryAllowed(
+    "participant B peut lister via participantBUid",
+    async () => {
+      const rows =
+        await firestoreRunQuery(
+          tokenB,
+          {
+            from: [
+              {
+                collectionId:
+                  "playerConversations",
+              },
+            ],
+
+            where: {
+              fieldFilter: {
+                field: {
+                  fieldPath:
+                    "participantBUid",
+                },
+
+                op:
+                  "EQUAL",
+
+                value: {
+                  stringValue:
+                    B.uid,
+                },
+              },
+            },
+          }
+        );
+
+      if (participantBUid !== B.uid) {
+        throw new Error(
+          "Fixture inattendue : B n'est pas participantBUid."
+        );
+      }
+
+      const ids =
+        rows
+          .map(
+            (row) =>
+              row.document?.name
+          )
+          .filter(Boolean);
+
+      if (
+        !ids.some(
+          (name) =>
+            name.endsWith(
+              `/playerConversations/${conversationId}`
+            )
+        )
+      ) {
+        throw new Error(
+          "Conversation A/B absente de la query participantBUid."
+        );
+      }
+    }
+  );
+
+
+  await expectQueryDenied(
+    "tiers ne peut pas lister via participantAUid de A",
+    () =>
+      firestoreRunQuery(
+        tokenC,
+        {
+          from: [
+            {
+              collectionId:
+                "playerConversations",
+            },
+          ],
+
+          where: {
+            fieldFilter: {
+              field: {
+                fieldPath:
+                  "participantAUid",
+              },
+
+              op:
+                "EQUAL",
+
+              value: {
+                stringValue:
+                  A.uid,
+              },
+            },
+          },
+        }
       )
   );
 
