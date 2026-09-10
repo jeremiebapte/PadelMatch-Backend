@@ -45,6 +45,52 @@ function asPositiveInteger(value) {
 }
 
 
+function asDate(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? null
+      : value;
+  }
+
+  if (
+    value
+    && typeof value.toDate === "function"
+  ) {
+    const converted = value.toDate();
+
+    return converted instanceof Date
+      && !Number.isNaN(converted.getTime())
+      ? converted
+      : null;
+  }
+
+  return null;
+}
+
+
+export function isGroupChatAggregateAlreadyRead({
+  membership,
+  lastMessageAt,
+}) {
+  const readAt =
+    asDate(
+      membership?.lastChatReadAt
+    );
+
+  const messageAt =
+    asDate(
+      lastMessageAt
+    );
+
+  return Boolean(
+    readAt
+    && messageAt
+    && readAt.getTime()
+      >= messageAt.getTime()
+  );
+}
+
+
 function normalizeSenderUids(value) {
   return Array.isArray(value)
     ? [
@@ -655,6 +701,9 @@ export function buildFlushGroupChatNotifications({
                 current.lastMessageId
               ),
 
+            lastMessageAt:
+              current.lastMessageAt,
+
             claimedVersion,
 
             retryCount:
@@ -708,6 +757,7 @@ export function buildFlushGroupChatNotifications({
         lastSenderPseudo,
         lastPreview,
         lastMessageId,
+        lastMessageAt,
         claimedVersion,
         retryCount,
       } = claimedPayload;
@@ -779,10 +829,35 @@ export function buildFlushGroupChatNotifications({
           && membership.messageNotificationsEnabled
             !== false;
 
+        const aggregateAlreadyRead =
+          stillEligible
+          && isGroupChatAggregateAlreadyRead({
+            membership,
+            lastMessageAt,
+          });
+
         if (delivered) {
           // Groupe supprimé ou archivé :
           // l'agrégat sera supprimé sans notification.
         } else if (!stillEligible) {
+          delivered = true;
+        } else if (aggregateAlreadyRead) {
+          logger?.info?.(
+            "group chat notification discarded: already read",
+            {
+              groupId,
+              recipientUid,
+              queueId:
+                claimedPayload.queueId,
+              lastMessageId,
+            }
+          );
+
+          /*
+           * delivered=true signifie ici "traité".
+           * La transaction finale supprimera cet agrégat,
+           * sans appeler FCM.
+           */
           delivered = true;
         } else {
           const tokens =

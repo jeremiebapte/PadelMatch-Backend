@@ -257,7 +257,30 @@ service cloud.firestore {
           )
         );
 
-      allow create, update, delete: if false;
+      /*
+       * Group Chat read state.
+       *
+       * Un membre peut uniquement avancer son propre état de lecture.
+       * Aucun rôle, statut, réglage de notification ou autre donnée
+       * du membership ne peut être modifié par ce chemin.
+       */
+      allow update: if signedIn()
+        && resource.data.userId == uid()
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.groupId == resource.data.groupId
+        && request.resource.data.diff(resource.data)
+             .changedKeys()
+             .hasOnly([
+               'lastChatReadAt',
+               'lastChatReadMessageId'
+             ])
+        && request.resource.data.lastChatReadAt is timestamp
+        && request.resource.data.lastChatReadAt == request.time
+        && request.resource.data.lastChatReadMessageId is string
+        && request.resource.data.lastChatReadMessageId.size() > 0
+        && request.resource.data.lastChatReadMessageId.size() <= 200;
+
+      allow create, delete: if false;
     }
 
     // =========================================================
