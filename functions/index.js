@@ -106,6 +106,10 @@ import {
 } from "./createMatch.js";
 
 import {
+  buildUpdateMatchDistribution,
+} from "./updateMatchDistribution.js";
+
+import {
   createUserActivityRecorder,
 } from "./domain/activity/UserActivityRecorder.js";
 
@@ -1577,6 +1581,19 @@ export const createMatch =
 // ======================================================
 // CALLABLE — createClubAvailability
 // ======================================================
+
+export const updateMatchDistribution =
+  buildUpdateMatchDistribution({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    logger,
+  });
+
+
+
 export const createClubAvailability = onCall(RUNTIME, async (req) => {
   const uid = assertAuth(req);
   const data = req.data ?? {};
