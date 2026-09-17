@@ -11,6 +11,11 @@
 // ======================================================
 
 import {
+  buildInitialMatchDistribution,
+} from "./domain/matches/MatchDistribution.js";
+
+
+import {
 
   GroupActivityType,
   GroupActivityVisibility,
@@ -596,8 +601,16 @@ function buildMatchDocument({
 
     participants,
 
+    ...buildInitialMatchDistribution({
+      groupId:
+        input.groupId,
+    }),
+
     ...(input.groupId
       ? {
+          // Compatibilité legacy :
+          // groupId reste présent tant que
+          // les clients existants l'utilisent.
           groupId:
             input.groupId,
         }
