@@ -25,10 +25,10 @@ test(
   () => {
     const matches = [
       {
-        createurUid: "A",
+        createurUid: "AAAAAAAAAAAAAAAAAAAA",
         participants: [
-          "A",
-          "B",
+          "AAAAAAAAAAAAAAAAAAAA",
+          "BBBBBBBBBBBBBBBBBBBB",
           "ami_de_A_1",
           "ami_de_A_2",
         ],
@@ -36,21 +36,21 @@ test(
         dateHeure: 1000,
       },
       {
-        createurUid: "A",
+        createurUid: "AAAAAAAAAAAAAAAAAAAA",
         participants: [
-          "A",
-          "B",
-          "C",
+          "AAAAAAAAAAAAAAAAAAAA",
+          "BBBBBBBBBBBBBBBBBBBB",
+          "CCCCCCCCCCCCCCCCCCCC",
           "ami_de_A_3",
         ],
         placeId: "place_1",
         dateHeure: 2000,
       },
       {
-        createurUid: "B",
+        createurUid: "BBBBBBBBBBBBBBBBBBBB",
         participants: [
-          "B",
-          "A",
+          "BBBBBBBBBBBBBBBBBBBB",
+          "AAAAAAAAAAAAAAAAAAAA",
           "friend_B_1",
         ],
         placeId: "place_2",
@@ -72,7 +72,7 @@ test(
     );
 
     const a =
-      byUid(rows, "A");
+      byUid(rows, "AAAAAAAAAAAAAAAAAAAA");
 
     assert.equal(
       a.matchesCreated,
@@ -101,12 +101,12 @@ test(
 
     assert.equal(
       a.matchesWithExternalPlayers,
-      3,
+      2,
     );
 
     assert.equal(
       a.externalParticipantSlots,
-      4,
+      3,
     );
 
     assert.deepEqual(
@@ -134,7 +134,7 @@ test(
     );
 
     const b =
-      byUid(rows, "B");
+      byUid(rows, "BBBBBBBBBBBBBBBBBBBB");
 
     assert.equal(
       b.matchesCreated,
@@ -157,7 +157,7 @@ test(
     );
 
     const c =
-      byUid(rows, "C");
+      byUid(rows, "CCCCCCCCCCCCCCCCCCCC");
 
     assert.equal(
       c.matchesCreated,
@@ -188,9 +188,9 @@ test(
     const rows =
       buildPlayerNetworkStats([
         {
-          createurUid: "ORGANIZER",
+          createurUid: "ORGANIZER_FIREBASE_UID_123",
           participants: [
-            "ORGANIZER",
+            "ORGANIZER_FIREBASE_UID_123",
             "ami_de_ORGANIZER_1",
             "ami_de_ORGANIZER_2",
             "ami_de_ORGANIZER_3",
@@ -203,7 +203,7 @@ test(
     const organizer =
       byUid(
         rows,
-        "ORGANIZER",
+        "ORGANIZER_FIREBASE_UID_123",
       );
 
     assert.equal(
@@ -250,23 +250,129 @@ test(
     const rows =
       buildPlayerNetworkStats([
         {
-          createurUid: "A",
+          createurUid: "AAAAAAAAAAAAAAAAAAAA",
           participants: [
-            "A",
-            "A",
-            "B",
+            "AAAAAAAAAAAAAAAAAAAA",
+            "AAAAAAAAAAAAAAAAAAAA",
+            "BBBBBBBBBBBBBBBBBBBB",
           ],
         },
       ]);
 
     assert.equal(
-      byUid(rows, "A").matchesPlayed,
+      byUid(rows, "AAAAAAAAAAAAAAAAAAAA").matchesPlayed,
       1,
     );
 
     assert.equal(
-      byUid(rows, "A")
+      byUid(rows, "AAAAAAAAAAAAAAAAAAAA")
         .uniquePadimaPlayersSeen,
+      1,
+    );
+  },
+);
+
+
+test(
+  "external slots are credited only to the match creator",
+  () => {
+    const rows =
+      buildPlayerNetworkStats([
+        {
+          createurUid: "AAAAAAAAAAAAAAAAAAAA",
+          participants: [
+            "AAAAAAAAAAAAAAAAAAAA",
+            "BBBBBBBBBBBBBBBBBBBB",
+            "ami_de_A_1",
+            "ami_de_A_2",
+          ],
+        },
+      ]);
+
+    const a =
+      byUid(rows, "AAAAAAAAAAAAAAAAAAAA");
+
+    const b =
+      byUid(rows, "BBBBBBBBBBBBBBBBBBBB");
+
+    assert.equal(
+      a.externalParticipantSlots,
+      2,
+    );
+
+    assert.equal(
+      a.matchesWithExternalPlayers,
+      1,
+    );
+
+    assert.equal(
+      b.externalParticipantSlots,
+      0,
+    );
+
+    assert.equal(
+      b.matchesWithExternalPlayers,
+      0,
+    );
+  },
+);
+
+
+test(
+  "filters participants and creators against known Padima users",
+  () => {
+    const rows =
+      buildPlayerNetworkStats(
+        [
+          {
+            createurUid: "REAL_A_FIREBASE_UID_123456789",
+            participants: [
+              "REAL_A_FIREBASE_UID_123456789",
+              "REAL_B_FIREBASE_UID_123456789",
+              "uA",
+            ],
+          },
+          {
+            createurUid: "uA",
+            participants: [
+              "uA",
+              "REAL_A_FIREBASE_UID_123456789",
+            ],
+          },
+        ],
+        {
+          validUserIds: new Set([
+            "REAL_A_FIREBASE_UID_123456789",
+            "REAL_B_FIREBASE_UID_123456789",
+          ]),
+        },
+      );
+
+    assert.equal(
+      rows.length,
+      2,
+    );
+
+    assert.equal(
+      rows.some(
+        (row) => row.uid === "uA",
+      ),
+      false,
+    );
+
+    assert.equal(
+      byUid(
+        rows,
+        "REAL_A_FIREBASE_UID_123456789",
+      ).uniquePadimaPlayersSeen,
+      1,
+    );
+
+    assert.equal(
+      byUid(
+        rows,
+        "REAL_B_FIREBASE_UID_123456789",
+      ).uniquePadimaPlayersSeen,
       1,
     );
   },
@@ -279,10 +385,10 @@ test(
     const rows =
       buildPlayerNetworkStats([
         {
-          creatorUid: "LEGACY",
+          creatorUid: "LEGACY_FIREBASE_UID_12345",
           participants: [
-            "LEGACY",
-            "OTHER",
+            "LEGACY_FIREBASE_UID_12345",
+            "OTHER_FIREBASE_UID_123456",
           ],
         },
       ]);
@@ -290,7 +396,7 @@ test(
     assert.equal(
       byUid(
         rows,
-        "LEGACY",
+        "LEGACY_FIREBASE_UID_12345",
       ).matchesCreated,
       1,
     );
@@ -304,16 +410,16 @@ test(
     const rows =
       buildPlayerNetworkStats([
         {
-          createurUid: "A",
+          createurUid: "AAAAAAAAAAAAAAAAAAAA",
           participants: [
-            "A",
-            "B",
+            "AAAAAAAAAAAAAAAAAAAA",
+            "BBBBBBBBBBBBBBBBBBBB",
           ],
         },
       ]);
 
     const a =
-      byUid(rows, "A");
+      byUid(rows, "AAAAAAAAAAAAAAAAAAAA");
 
     assert.equal(
       Object.hasOwn(
@@ -329,6 +435,129 @@ test(
         "badge",
       ),
       false,
+    );
+  },
+);
+
+
+test(
+  "accepts plausible historical Firebase creator even when not in current users",
+  () => {
+    const historicalUid =
+      "HISTORICAL_FIREBASE_UID_123";
+
+    const currentUid =
+      "CURRENT_FIREBASE_UID_123456";
+
+    const rows =
+      buildPlayerNetworkStats(
+        [
+          {
+            createurUid: historicalUid,
+            participants: [
+              historicalUid,
+              currentUid,
+            ],
+            dateHeure: 1000,
+          },
+        ],
+        {
+          validUserIds:
+            new Set([
+              currentUid,
+            ]),
+        },
+      );
+
+    assert.equal(
+      rows.some(
+        (row) =>
+          row.uid === historicalUid,
+      ),
+      false,
+    );
+
+    assert.equal(
+      rows.some(
+        (row) =>
+          row.uid === currentUid,
+      ),
+      true,
+    );
+  },
+);
+
+
+test(
+  "rejects short test-like ids",
+  () => {
+    const rows =
+      buildPlayerNetworkStats(
+        [
+          {
+            createurUid: "uA",
+            participants: [
+              "uA",
+            ],
+          },
+        ],
+        {
+          validUserIds:
+            new Set([
+              "uA",
+            ]),
+        },
+      );
+
+    assert.equal(
+      rows.length,
+      0,
+    );
+  },
+);
+
+
+test(
+  "ignores future activity dates",
+  () => {
+    const uid =
+      "CURRENT_FIREBASE_UID_123456";
+
+    const rows =
+      buildPlayerNetworkStats(
+        [
+          {
+            createurUid: uid,
+            participants: [
+              uid,
+            ],
+            dateHeure:
+              Date.now()
+              + 365 * 24 * 60 * 60 * 1000,
+          },
+        ],
+        {
+          validUserIds:
+            new Set([
+              uid,
+            ]),
+        },
+      );
+
+    const row =
+      byUid(
+        rows,
+        uid,
+      );
+
+    assert.equal(
+      row.firstActivityAtMs,
+      null,
+    );
+
+    assert.equal(
+      row.lastActivityAtMs,
+      null,
     );
   },
 );

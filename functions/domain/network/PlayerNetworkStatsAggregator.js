@@ -18,13 +18,19 @@ function isExternalPlaceholder(value) {
   );
 }
 
-function isRealUid(value) {
+function isPlausibleFirebaseUid(value) {
   const raw = asString(value);
 
   return Boolean(
     raw
+    && raw.length >= 20
+    && raw.length <= 128
     && !isExternalPlaceholder(raw)
   );
+}
+
+function isRealUid(value) {
+  return isPlausibleFirebaseUid(value);
 }
 
 function getCreatorUid(match) {
@@ -63,6 +69,13 @@ function extractParticipant(matchParticipant) {
       };
     }
 
+    if (!isRealUid(raw)) {
+      return {
+        type: "unknown",
+        uid: "",
+      };
+    }
+
     return {
       type: "padima",
       uid: raw,
@@ -92,6 +105,10 @@ function extractParticipant(matchParticipant) {
           type: "external",
           uid: "",
         };
+      }
+
+      if (!isRealUid(raw)) {
+        continue;
       }
 
       return {
@@ -189,7 +206,7 @@ function timestampToMs(value) {
   return null;
 }
 
-function getActivityMs(match) {
+function getActivityMs(match, nowMs = Date.now()) {
   const candidates = [
     match?.dateHeure,
     match?.dateTime,
@@ -201,7 +218,10 @@ function getActivityMs(match) {
     const ms =
       timestampToMs(candidate);
 
-    if (ms !== null) {
+    if (
+      ms !== null
+      && ms <= nowMs
+    ) {
       return ms;
     }
   }
@@ -297,12 +317,22 @@ function serializeTopPlaces(placeCounts, limit = 5) {
     }));
 }
 
-export function buildPlayerNetworkStats(matches) {
+export function buildPlayerNetworkStats(
+  matches,
+  {
+    validUserIds = null,
+  } = {},
+) {
   if (!Array.isArray(matches)) {
     throw new TypeError(
       "matches must be an array",
     );
   }
+
+  const validUidSet =
+    validUserIds instanceof Set
+      ? validUserIds
+      : null;
 
   const players = new Map();
   const pairMatchCounts = new Map();
@@ -312,14 +342,41 @@ export function buildPlayerNetworkStats(matches) {
       continue;
     }
 
+    const actors =
+      extractMatchActors(match);
+
+    const creatorUid =
+      actors.creatorUid;
+
+    const currentParticipantUids =
+      actors.realUids.filter(
+        (uid) =>
+          !validUidSet
+          || validUidSet.has(uid),
+      );
+
+    const relationUids =
+      [
+        ...new Set(
+          [
+            creatorUid,
+            ...currentParticipantUids,
+          ].filter(Boolean),
+        ),
+      ];
+
+    const realUids =
+      currentParticipantUids;
+
     const {
-      creatorUid,
-      realUids,
       externalSlots,
       unknownSlots,
-    } = extractMatchActors(match);
+    } = actors;
 
-    if (realUids.length === 0) {
+    if (
+      realUids.length === 0
+      && !creatorUid
+    ) {
       continue;
     }
 
@@ -342,16 +399,6 @@ export function buildPlayerNetworkStats(matches) {
         state.matchesWithOtherPadimaPlayers += 1;
       }
 
-      if (externalSlots > 0) {
-        state.matchesWithExternalPlayers += 1;
-      }
-
-      state.externalParticipantSlots +=
-        externalSlots;
-
-      state.unknownParticipantSlots +=
-        unknownSlots;
-
       updateActivityRange(
         state,
         activityMs,
@@ -371,7 +418,13 @@ export function buildPlayerNetworkStats(matches) {
       }
     }
 
-    if (creatorUid) {
+    if (
+      creatorUid
+      && (
+        !validUidSet
+        || validUidSet.has(creatorUid)
+      )
+    ) {
       const creator =
         ensurePlayerState(
           players,
@@ -379,22 +432,32 @@ export function buildPlayerNetworkStats(matches) {
         );
 
       creator.matchesCreated += 1;
+
+      if (externalSlots > 0) {
+        creator.matchesWithExternalPlayers += 1;
+      }
+
+      creator.externalParticipantSlots +=
+        externalSlots;
+
+      creator.unknownParticipantSlots +=
+        unknownSlots;
     }
 
     for (
       let i = 0;
-      i < realUids.length;
+      i < relationUids.length;
       i += 1
     ) {
       for (
         let j = i + 1;
-        j < realUids.length;
+        j < relationUids.length;
         j += 1
       ) {
         const key =
           pairKey(
-            realUids[i],
-            realUids[j],
+            relationUids[i],
+            relationUids[j],
           );
 
         pairMatchCounts.set(
@@ -432,10 +495,16 @@ export function buildPlayerNetworkStats(matches) {
       );
 
     const playerA =
-      players.get(playerAUid);
+      validUidSet
+      && !validUidSet.has(playerAUid)
+        ? null
+        : players.get(playerAUid);
 
     const playerB =
-      players.get(playerBUid);
+      validUidSet
+      && !validUidSet.has(playerBUid)
+        ? null
+        : players.get(playerBUid);
 
     if (playerA) {
       playerA.repeatedPadimaPlayers.add(
@@ -513,4 +582,5 @@ export const PlayerNetworkStatsInternals = {
   extractParticipant,
   extractMatchActors,
   getPlaceId,
+  isPlausibleFirebaseUid,
 };
