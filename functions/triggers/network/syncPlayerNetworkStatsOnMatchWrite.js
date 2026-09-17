@@ -24,7 +24,10 @@ export function buildSyncPlayerNetworkStatsOnMatchWrite({
     getFirestore,
 } = {}) {
   return onDocumentWrittenFn(
-    MATCH_PATH,
+    {
+      document: MATCH_PATH,
+      region: "europe-west1",
+    },
     async (event) => {
       const db =
         getFirestoreFn();

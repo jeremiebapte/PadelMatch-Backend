@@ -6652,3 +6652,8 @@ export const syncGroupMembershipSnapshots =
     FieldValue,
     logger,
   });
+
+// ======================================================
+// PLAYER NETWORK STATS — automatic match synchronization
+// ======================================================
+export { syncPlayerNetworkStatsOnMatchWrite } from "./triggers/network/syncPlayerNetworkStatsOnMatchWrite.js";
