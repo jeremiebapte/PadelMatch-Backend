@@ -7,16 +7,16 @@
 //
 // Le match reste unique : aucun document match dupliqué.
 //
-// Les mutations du match utilisent une transaction Firestore
-// afin d'éviter les pertes de mise à jour concurrentes.
+// Lot 2C:
+// - permissions groupe transactionnelles
+// - invariant creator ∈ participants
+// - outbox déterministe pour les effets groupe
 // ======================================================
 
 import {
   GroupPermissionError,
   assertCanCreateMatch,
-  createGroupActivityRecorder,
   membershipDocumentId,
-  recordMatchCreated,
   validateGroupId,
 } from "./domain/groups/index.js";
 
@@ -26,6 +26,11 @@ import {
   normalizeMatchDistribution,
   sameMatchDistribution,
 } from "./domain/matches/MatchDistribution.js";
+
+import {
+  MATCH_DISTRIBUTION_EVENT_TYPE,
+  matchDistributionEventId,
+} from "./MatchDistributionEffectService.js";
 
 
 function asString(value) {
@@ -51,6 +56,27 @@ function normalizeDateMs(value) {
   }
 
   return null;
+}
+
+
+function participantUid(value) {
+  if (typeof value === "string") {
+    return asString(value);
+  }
+
+  if (
+    value
+    && typeof value === "object"
+  ) {
+    return asString(
+      value.uid
+      || value.userId
+      || value.playerUid
+      || value.id
+    );
+  }
+
+  return "";
 }
 
 
@@ -88,6 +114,7 @@ function mapGroupPermissionError(
 
 
 async function assertCanDistributeToGroup({
+  tx,
   db,
   uid,
   groupId,
@@ -99,20 +126,30 @@ async function assertCanDistributeToGroup({
       uid
     );
 
-  const [
-    groupSnapshot,
-    membershipSnapshot,
-  ] = await Promise.all([
+  const groupRef =
     db
       .collection("groups")
-      .doc(groupId)
-      .get(),
+      .doc(groupId);
 
+  const membershipRef =
     db
-      .collection("groupMemberships")
-      .doc(membershipId)
-      .get(),
-  ]);
+      .collection(
+        "groupMemberships"
+      )
+      .doc(membershipId);
+
+  // IMPORTANT:
+  // Both reads happen inside the SAME transaction
+  // that will mutate match.distribution.
+  const groupSnapshot =
+    await tx.get(
+      groupRef
+    );
+
+  const membershipSnapshot =
+    await tx.get(
+      membershipRef
+    );
 
   if (!groupSnapshot.exists) {
     throw new HttpsError(
@@ -231,6 +268,50 @@ async function assertMatchOwner({
 }
 
 
+function assertCreatorParticipantInvariant({
+  match,
+  HttpsError,
+}) {
+  const createdByType =
+    asString(
+      match.createdByType
+      || "player"
+    );
+
+  if (createdByType === "club") {
+    return;
+  }
+
+  const creatorUid =
+    asString(
+      match.createurUid
+    );
+
+  const participants =
+    Array.isArray(
+      match.participants
+    )
+      ? match.participants
+      : [];
+
+  const creatorPresent =
+    creatorUid
+    && participants.some(
+      (participant) =>
+        participantUid(
+          participant
+        ) === creatorUid
+    );
+
+  if (!creatorPresent) {
+    throw new HttpsError(
+      "failed-precondition",
+      "MATCH_CREATOR_NOT_PARTICIPANT"
+    );
+  }
+}
+
+
 export function buildUpdateMatchDistribution({
   onCall,
   HttpsError,
@@ -238,14 +319,7 @@ export function buildUpdateMatchDistribution({
   db,
   FieldValue,
   logger,
-  notifyGroupMatchCreated,
 }) {
-  const recordGroupActivity =
-    createGroupActivityRecorder({
-      db,
-      logger,
-    });
-
   return onCall(
     runtime,
     async (req) => {
@@ -306,20 +380,6 @@ export function buildUpdateMatchDistribution({
         }
       }
 
-      let targetGroupContext =
-        null;
-
-      if (targetGroupId) {
-        targetGroupContext =
-          await assertCanDistributeToGroup({
-            db,
-            uid,
-            groupId:
-              targetGroupId,
-            HttpsError,
-          });
-      }
-
       const matchRef =
         db
           .collection("matches")
@@ -351,6 +411,26 @@ export function buildUpdateMatchDistribution({
               uid,
               HttpsError,
             });
+
+            assertCreatorParticipantInvariant({
+              match,
+              HttpsError,
+            });
+
+            let targetGroupContext =
+              null;
+
+            if (targetGroupId) {
+              targetGroupContext =
+                await assertCanDistributeToGroup({
+                  tx,
+                  db,
+                  uid,
+                  groupId:
+                    targetGroupId,
+                  HttpsError,
+                });
+            }
 
             const dateHeure =
               normalizeDateMs(
@@ -443,13 +523,20 @@ export function buildUpdateMatchDistribution({
             if (!changed) {
               return {
                 changed: false,
-                targetGroupAdded:
-                  false,
+
                 origin:
                   after.origin,
+
                 distribution:
                   after.distribution,
-                match,
+
+                targetGroupAdded:
+                  false,
+
+                targetGroupMembershipId:
+                  targetGroupContext
+                    ?.membershipId
+                  ?? null,
               };
             }
 
@@ -475,125 +562,94 @@ export function buildUpdateMatchDistribution({
               }
             );
 
-            return {
-              changed: true,
-              targetGroupAdded,
-              origin:
-                after.origin,
-              distribution:
-                after.distribution,
-              match: {
+            if (
+              targetGroupAdded
+              && targetGroupId
+            ) {
+              const eventId =
+                matchDistributionEventId(
+                  matchId,
+                  targetGroupId
+                );
+
+              const eventRef =
+                db
+                  .collection(
+                    "matchDistributionEvents"
+                  )
+                  .doc(eventId);
+
+              const matchAfter = {
                 ...match,
                 origin:
                   after.origin,
                 distribution:
                   after.distribution,
-              },
+              };
+
+              tx.create(
+                eventRef,
+                {
+                  eventId,
+
+                  schemaVersion: 1,
+
+                  type:
+                    MATCH_DISTRIBUTION_EVENT_TYPE,
+
+                  status:
+                    "pending",
+
+                  matchId,
+
+                  groupId:
+                    targetGroupId,
+
+                  actorUid:
+                    uid,
+
+                  creatorProfile: {
+                    pseudo:
+                      asString(
+                        match
+                          .createurPseudo
+                      ),
+
+                    avatar:
+                      asString(
+                        match
+                          .createurAvatar
+                      ),
+                  },
+
+                  matchSnapshot:
+                    matchAfter,
+
+                  createdAt:
+                    FieldValue
+                      .serverTimestamp(),
+                }
+              );
+            }
+
+            return {
+              changed: true,
+
+              origin:
+                after.origin,
+
+              distribution:
+                after.distribution,
+
+              targetGroupAdded,
+
+              targetGroupMembershipId:
+                targetGroupContext
+                  ?.membershipId
+                ?? null,
             };
           }
         );
-
-      if (
-        result.targetGroupAdded
-        && targetGroupId
-      ) {
-        const creatorProfile = {
-          pseudo:
-            asString(
-              result.match
-                ?.createurPseudo
-            ),
-
-          avatar:
-            asString(
-              result.match
-                ?.createurAvatar
-            ),
-        };
-
-        try {
-          await recordMatchCreated({
-            groupId:
-              targetGroupId,
-
-            matchId,
-
-            uid,
-
-            creatorProfile,
-
-            match:
-              result.match,
-
-            recordGroupActivity,
-            db,
-            FieldValue,
-            logger,
-
-            metadata: {
-              source:
-                "match_distribution",
-            },
-          });
-        } catch (error) {
-          logger?.warn?.(
-            "updateMatchDistribution group activity ignored failure",
-            {
-              matchId,
-              groupId:
-                targetGroupId,
-              uid,
-              error:
-                String(
-                  error?.message
-                  ?? error
-                ),
-            }
-          );
-        }
-
-        if (
-          typeof notifyGroupMatchCreated
-          === "function"
-        ) {
-          try {
-            await notifyGroupMatchCreated({
-              groupId:
-                targetGroupId,
-
-              group:
-                targetGroupContext
-                  ?.group
-                  ?? {},
-
-              matchId,
-
-              creatorUid:
-                uid,
-
-              creatorProfile,
-
-              match:
-                result.match,
-            });
-          } catch (error) {
-            logger?.warn?.(
-              "updateMatchDistribution group notification ignored failure",
-              {
-                matchId,
-                groupId:
-                  targetGroupId,
-                uid,
-                error:
-                  String(
-                    error?.message
-                    ?? error
-                  ),
-              }
-            );
-          }
-        }
-      }
 
       logger?.info?.(
         result.changed
@@ -604,10 +660,17 @@ export function buildUpdateMatchDistribution({
           uid,
           makePublic,
           targetGroupId,
+
           targetGroupMembershipId:
-            targetGroupContext
-              ?.membershipId
-              ?? null,
+            result
+              .targetGroupMembershipId
+            ?? null,
+
+          targetGroupAdded:
+            result
+              .targetGroupAdded
+            === true,
+
           distribution:
             result.distribution,
         }
@@ -615,11 +678,15 @@ export function buildUpdateMatchDistribution({
 
       return {
         ok: true,
+
         changed:
           result.changed,
+
         matchId,
+
         origin:
           result.origin,
+
         distribution:
           result.distribution,
       };

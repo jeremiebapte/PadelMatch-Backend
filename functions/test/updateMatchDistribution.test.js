@@ -26,23 +26,69 @@ function makeDb({
   membership = null,
   club = null,
 }) {
-  let written = null;
-  const groupUpdates = [];
-  const activityWrites = [];
+  let matchWrite = null;
+
+  const eventWrites = [];
+  const transactionReads = [];
 
   const db = {
     async runTransaction(handler) {
+      const pending = [];
+
       const tx = {
         async get(ref) {
+          transactionReads.push({
+            collection:
+              ref.collectionName,
+            id:
+              ref.id,
+          });
+
           return ref.get();
         },
 
         set(ref, value) {
-          written = value;
+          pending.push(() => {
+            if (
+              ref.collectionName
+              === "matches"
+            ) {
+              matchWrite =
+                value;
+            }
+          });
+        },
+
+        create(ref, value) {
+          pending.push(() => {
+            if (
+              ref.collectionName
+              === "matchDistributionEvents"
+            ) {
+              eventWrites.push({
+                id:
+                  ref.id,
+                value,
+              });
+
+              return;
+            }
+
+            throw new Error(
+              `unexpected tx.create ${ref.collectionName}`
+            );
+          });
         },
       };
 
-      return handler(tx);
+      const result =
+        await handler(tx);
+
+      for (const commit of pending) {
+        commit();
+      }
+
+      return result;
     },
 
     collection(name) {
@@ -50,13 +96,16 @@ function makeDb({
         doc(id) {
           return {
             id,
+            collectionName:
+              name,
 
             async get() {
               if (name === "matches") {
                 return {
                   exists:
                     match !== null,
-                  data: () => match,
+                  data: () =>
+                    match,
                 };
               }
 
@@ -64,7 +113,8 @@ function makeDb({
                 return {
                   exists:
                     group !== null,
-                  data: () => group,
+                  data: () =>
+                    group,
                 };
               }
 
@@ -84,53 +134,13 @@ function makeDb({
                 return {
                   exists:
                     club !== null,
-                  data: () => club,
+                  data: () =>
+                    club,
                 };
               }
 
               throw new Error(
-                `unexpected collection ${name}`
-              );
-            },
-
-            async create(value) {
-              if (
-                name
-                === "groupActivities"
-              ) {
-                activityWrites.push(
-                  {
-                    id,
-                    value,
-                  }
-                );
-                return;
-              }
-
-              throw new Error(
-                `unexpected create ${name}`
-              );
-            },
-
-            async set(value) {
-              written = value;
-            },
-
-            async update(value) {
-              if (
-                name === "groups"
-              ) {
-                groupUpdates.push(
-                  {
-                    id,
-                    value,
-                  }
-                );
-                return;
-              }
-
-              throw new Error(
-                `unexpected update ${name}`
+                `unexpected get ${name}`
               );
             },
           };
@@ -138,16 +148,16 @@ function makeDb({
       };
     },
 
-    getWritten() {
-      return written;
+    getMatchWrite() {
+      return matchWrite;
     },
 
-    getGroupUpdates() {
-      return groupUpdates;
+    getEventWrites() {
+      return eventWrites;
     },
 
-    getActivityWrites() {
-      return activityWrites;
+    getTransactionReads() {
+      return transactionReads;
     },
   };
 
@@ -162,36 +172,88 @@ const FieldValue = {
 };
 
 
+function playerMatch(
+  overrides = {}
+) {
+  return {
+    createurUid:
+      "user_A",
+
+    participants: [
+      "user_A",
+    ],
+
+    dateHeure:
+      Date.now()
+      + 3600000,
+
+    ...overrides,
+  };
+}
+
+
+function allowedGroup() {
+  return {
+    status: "active",
+
+    settings: {
+      canMembersCreateMatches:
+        true,
+    },
+  };
+}
+
+
+function activeMembership() {
+  return {
+    userId:
+      "user_A",
+
+    groupId:
+      "group_B",
+
+    status:
+      "active",
+
+    role:
+      "member",
+  };
+}
+
+
+function makeCallable(db) {
+  return buildUpdateMatchDistribution({
+    onCall:
+      makeOnCall(),
+
+    HttpsError:
+      FakeHttpsError,
+
+    runtime: {},
+
+    db,
+
+    FieldValue,
+
+    logger: {},
+  });
+}
+
+
 test(
   "owner can make a legacy group match public",
   async () => {
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
-          groupId:
-            "group_A",
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue,
-        logger: {},
+        match:
+          playerMatch({
+            groupId:
+              "group_A",
+          }),
       });
 
     const result =
-      await callable({
+      await makeCallable(db)({
         auth: {
           uid: "user_A",
         },
@@ -199,6 +261,7 @@ test(
         data: {
           matchId:
             "match_1",
+
           makePublic:
             true,
         },
@@ -224,6 +287,13 @@ test(
         "group_A",
       ]
     );
+
+    assert.equal(
+      db
+        .getEventWrites()
+        .length,
+      0
+    );
   }
 );
 
@@ -233,41 +303,27 @@ test(
   async () => {
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue,
-        logger: {},
+        match:
+          playerMatch(),
       });
 
     await assert.rejects(
       () =>
-        callable({
+        makeCallable(db)({
           auth: {
-            uid: "user_B",
+            uid:
+              "user_B",
           },
 
           data: {
             matchId:
               "match_1",
+
             makePublic:
               true,
           },
         }),
+
       (error) =>
         error.code
           === "permission-denied"
@@ -280,55 +336,81 @@ test(
 
 
 test(
-  "owner can distribute to an allowed group",
+  "player match refuses distribution when creator is missing from participants",
   async () => {
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
-
-        group: {
-          status: "active",
-          settings: {
-            canMembersCreateMatches:
-              true,
-          },
-        },
-
-        membership: {
-          userId: "user_A",
-          groupId: "group_B",
-          status: "active",
-          role: "member",
-        },
+        match:
+          playerMatch({
+            participants: [
+              "user_B",
+            ],
+          }),
       });
 
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue,
-        logger: {},
+    await assert.rejects(
+      () =>
+        makeCallable(db)({
+          auth: {
+            uid:
+              "user_A",
+          },
+
+          data: {
+            matchId:
+              "match_1",
+
+            makePublic:
+              true,
+          },
+        }),
+
+      (error) =>
+        error.code
+          === "failed-precondition"
+        &&
+        error.message
+          === "MATCH_CREATOR_NOT_PARTICIPANT"
+    );
+  }
+);
+
+
+test(
+  "allowed target group is checked inside transaction and creates deterministic outbox event",
+  async () => {
+    const db =
+      makeDb({
+        match:
+          playerMatch({
+            createurPseudo:
+              "Jeremie",
+
+            createurAvatar:
+              "avatar.jpg",
+
+            lieu:
+              "Padel Club",
+          }),
+
+        group:
+          allowedGroup(),
+
+        membership:
+          activeMembership(),
       });
 
     const result =
-      await callable({
+      await makeCallable(db)({
         auth: {
-          uid: "user_A",
+          uid:
+            "user_A",
         },
 
         data: {
           matchId:
             "match_1",
+
           groupId:
             "group_B",
         },
@@ -347,250 +429,110 @@ test(
         "group_B",
       ]
     );
-  }
-);
 
+    const reads =
+      db
+        .getTransactionReads();
 
-test(
-  "new target group triggers group notification once",
-  async () => {
-    const notifications = [];
-
-    const db =
-      makeDb({
-        match: {
-          createurUid:
-            "user_A",
-          createurPseudo:
-            "Jeremie",
-          createurAvatar:
-            "avatar.jpg",
-          lieu:
-            "Padel Club",
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
-
-        group: {
-          status: "active",
-          name: "Groupe B",
-          settings: {
-            canMembersCreateMatches:
-              true,
-          },
-        },
-
-        membership: {
-          userId: "user_A",
-          groupId: "group_B",
-          status: "active",
-          role: "member",
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue: {
-          ...FieldValue,
-
-          increment(value) {
-            return {
-              increment: value,
-            };
-          },
-        },
-        logger: {},
-
-        notifyGroupMatchCreated:
-          async (payload) => {
-            notifications.push(
-              payload
-            );
-          },
-      });
-
-    const result =
-      await callable({
-        auth: {
-          uid: "user_A",
-        },
-
-        data: {
-          matchId:
-            "match_1",
-          groupId:
-            "group_B",
-        },
-      });
-
-    assert.equal(
-      result.changed,
-      true
+    assert.ok(
+      reads.some(
+        (read) =>
+          read.collection
+            === "groups"
+          &&
+          read.id
+            === "group_B"
+      )
     );
 
+    assert.ok(
+      reads.some(
+        (read) =>
+          read.collection
+            === "groupMemberships"
+      )
+    );
+
+    const events =
+      db.getEventWrites();
+
     assert.equal(
-      notifications.length,
+      events.length,
       1
     );
 
     assert.equal(
-      notifications[0].groupId,
-      "group_B"
+      events[0].id,
+      "match_distribution__match_1__group_B"
     );
 
     assert.equal(
-      notifications[0].matchId,
-      "match_1"
-    );
-
-    assert.equal(
-      notifications[0]
-        .creatorProfile
-        .pseudo,
-      "Jeremie"
-    );
-
-    assert.equal(
-      db.getActivityWrites().length,
-      1
-    );
-
-    assert.equal(
-      db.getActivityWrites()[0]
-        .value
-        .groupId,
-      "group_B"
-    );
-
-    assert.equal(
-      db.getActivityWrites()[0]
+      events[0]
         .value
         .type,
-      "match_created"
+      "group_distribution_added"
     );
 
     assert.equal(
-      db.getActivityWrites()[0]
+      events[0]
         .value
         .matchId,
       "match_1"
     );
 
     assert.equal(
-      db.getActivityWrites()[0]
+      events[0]
         .value
-        .metadata
-        .source,
-      "match_distribution"
-    );
-
-    assert.equal(
-      db.getGroupUpdates().length,
-      1
-    );
-
-    assert.equal(
-      db.getGroupUpdates()[0].id,
+        .groupId,
       "group_B"
     );
 
-    assert.deepEqual(
-      db.getGroupUpdates()[0]
-        .value[
-          "stats.upcomingMatchCount"
-        ],
-      {
-        increment: 1,
-      }
-    );
-
-    assert.deepEqual(
-      db.getGroupUpdates()[0]
-        .value[
-          "stats.matchesCreated30d"
-        ],
-      {
-        increment: 1,
-      }
+    assert.equal(
+      events[0]
+        .value
+        .creatorProfile
+        .pseudo,
+      "Jeremie"
     );
   }
 );
 
 
 test(
-  "existing target group creates no duplicate notification",
+  "existing target group creates no second outbox event",
   async () => {
-    const notifications = [];
-
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
+        match:
+          playerMatch({
+            distribution: {
+              public:
+                false,
 
-          dateHeure:
-            Date.now()
-            + 3600000,
+              groupIds: [
+                "group_B",
+              ],
+            },
+          }),
 
-          distribution: {
-            public: false,
-            groupIds: [
-              "group_B",
-            ],
-          },
-        },
+        group:
+          allowedGroup(),
 
-        group: {
-          status: "active",
-          settings: {
-            canMembersCreateMatches:
-              true,
-          },
-        },
-
-        membership: {
-          userId: "user_A",
-          groupId: "group_B",
-          status: "active",
-          role: "member",
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue,
-        logger: {},
-
-        notifyGroupMatchCreated:
-          async (payload) => {
-            notifications.push(
-              payload
-            );
-          },
+        membership:
+          activeMembership(),
       });
 
     const result =
-      await callable({
+      await makeCallable(db)({
         auth: {
-          uid: "user_A",
+          uid:
+            "user_A",
         },
 
         data: {
           matchId:
             "match_1",
+
           groupId:
             "group_B",
         },
@@ -602,17 +544,9 @@ test(
     );
 
     assert.equal(
-      notifications.length,
-      0
-    );
-
-    assert.equal(
-      db.getActivityWrites().length,
-      0
-    );
-
-    assert.equal(
-      db.getGroupUpdates().length,
+      db
+        .getEventWrites()
+        .length,
       0
     );
   }
@@ -620,53 +554,28 @@ test(
 
 
 test(
-  "making public only sends no group notification",
+  "making public only creates no group outbox event",
   async () => {
-    const notifications = [];
-
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
-
-          groupId:
-            "group_A",
-
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue,
-        logger: {},
-
-        notifyGroupMatchCreated:
-          async (payload) => {
-            notifications.push(
-              payload
-            );
-          },
+        match:
+          playerMatch({
+            groupId:
+              "group_A",
+          }),
       });
 
     const result =
-      await callable({
+      await makeCallable(db)({
         auth: {
-          uid: "user_A",
+          uid:
+            "user_A",
         },
 
         data: {
           matchId:
             "match_1",
+
           makePublic:
             true,
         },
@@ -678,17 +587,9 @@ test(
     );
 
     assert.equal(
-      notifications.length,
-      0
-    );
-
-    assert.equal(
-      db.getActivityWrites().length,
-      0
-    );
-
-    assert.equal(
-      db.getGroupUpdates().length,
+      db
+        .getEventWrites()
+        .length,
       0
     );
   }
@@ -696,75 +597,34 @@ test(
 
 
 test(
-  "public plus new group sends one group notification",
+  "public plus new group creates exactly one outbox event",
   async () => {
-    const notifications = [];
-
     const db =
       makeDb({
-        match: {
-          createurUid:
-            "user_A",
+        match:
+          playerMatch(),
 
-          dateHeure:
-            Date.now()
-            + 3600000,
-        },
+        group:
+          allowedGroup(),
 
-        group: {
-          status: "active",
-          settings: {
-            canMembersCreateMatches:
-              true,
-          },
-        },
-
-        membership: {
-          userId: "user_A",
-          groupId: "group_B",
-          status: "active",
-          role: "member",
-        },
-      });
-
-    const callable =
-      buildUpdateMatchDistribution({
-        onCall:
-          makeOnCall(),
-        HttpsError:
-          FakeHttpsError,
-        runtime: {},
-        db,
-        FieldValue: {
-          ...FieldValue,
-
-          increment(value) {
-            return {
-              increment: value,
-            };
-          },
-        },
-        logger: {},
-
-        notifyGroupMatchCreated:
-          async (payload) => {
-            notifications.push(
-              payload
-            );
-          },
+        membership:
+          activeMembership(),
       });
 
     const result =
-      await callable({
+      await makeCallable(db)({
         auth: {
-          uid: "user_A",
+          uid:
+            "user_A",
         },
 
         data: {
           matchId:
             "match_1",
+
           makePublic:
             true,
+
           groupId:
             "group_B",
         },
@@ -792,17 +652,9 @@ test(
     );
 
     assert.equal(
-      notifications.length,
-      1
-    );
-
-    assert.equal(
-      db.getActivityWrites().length,
-      1
-    );
-
-    assert.equal(
-      db.getGroupUpdates().length,
+      db
+        .getEventWrites()
+        .length,
       1
     );
   }

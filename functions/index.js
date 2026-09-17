@@ -110,6 +110,10 @@ import {
 } from "./updateMatchDistribution.js";
 
 import {
+  buildProcessMatchDistributionEvent,
+} from "./MatchDistributionEffectService.js";
+
+import {
   createUserActivityRecorder,
 } from "./domain/activity/UserActivityRecorder.js";
 
@@ -1590,8 +1594,31 @@ export const updateMatchDistribution =
     db,
     FieldValue,
     logger,
+  });
+
+
+const processMatchDistributionEventHandler =
+  buildProcessMatchDistributionEvent({
+    db,
+    FieldValue,
+    logger,
     notifyGroupMatchCreated,
   });
+
+
+export const processMatchDistributionEvent =
+  onDocumentCreated(
+    {
+      region:
+        "europe-west1",
+
+      document:
+        "matchDistributionEvents/{eventId}",
+
+      retry: true,
+    },
+    processMatchDistributionEventHandler
+  );
 
 
 
