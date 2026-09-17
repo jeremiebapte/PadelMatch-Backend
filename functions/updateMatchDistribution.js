@@ -14,7 +14,9 @@
 import {
   GroupPermissionError,
   assertCanCreateMatch,
+  createGroupActivityRecorder,
   membershipDocumentId,
+  recordMatchCreated,
   validateGroupId,
 } from "./domain/groups/index.js";
 
@@ -236,7 +238,14 @@ export function buildUpdateMatchDistribution({
   db,
   FieldValue,
   logger,
+  notifyGroupMatchCreated,
 }) {
+  const recordGroupActivity =
+    createGroupActivityRecorder({
+      db,
+      logger,
+    });
+
   return onCall(
     runtime,
     async (req) => {
@@ -363,6 +372,16 @@ export function buildUpdateMatchDistribution({
                 match
               );
 
+            const wasAlreadyInTargetGroup =
+              targetGroupId
+                ? before
+                    .distribution
+                    .groupIds
+                    .includes(
+                      targetGroupId
+                    )
+                : false;
+
             let after =
               before;
 
@@ -409,13 +428,28 @@ export function buildUpdateMatchDistribution({
                 }
               );
 
+            const targetGroupAdded =
+              Boolean(
+                targetGroupId
+                && !wasAlreadyInTargetGroup
+                && after
+                  .distribution
+                  .groupIds
+                  .includes(
+                    targetGroupId
+                  )
+              );
+
             if (!changed) {
               return {
                 changed: false,
+                targetGroupAdded:
+                  false,
                 origin:
                   after.origin,
                 distribution:
                   after.distribution,
+                match,
               };
             }
 
@@ -443,13 +477,123 @@ export function buildUpdateMatchDistribution({
 
             return {
               changed: true,
+              targetGroupAdded,
               origin:
                 after.origin,
               distribution:
                 after.distribution,
+              match: {
+                ...match,
+                origin:
+                  after.origin,
+                distribution:
+                  after.distribution,
+              },
             };
           }
         );
+
+      if (
+        result.targetGroupAdded
+        && targetGroupId
+      ) {
+        const creatorProfile = {
+          pseudo:
+            asString(
+              result.match
+                ?.createurPseudo
+            ),
+
+          avatar:
+            asString(
+              result.match
+                ?.createurAvatar
+            ),
+        };
+
+        try {
+          await recordMatchCreated({
+            groupId:
+              targetGroupId,
+
+            matchId,
+
+            uid,
+
+            creatorProfile,
+
+            match:
+              result.match,
+
+            recordGroupActivity,
+            db,
+            FieldValue,
+            logger,
+
+            metadata: {
+              source:
+                "match_distribution",
+            },
+          });
+        } catch (error) {
+          logger?.warn?.(
+            "updateMatchDistribution group activity ignored failure",
+            {
+              matchId,
+              groupId:
+                targetGroupId,
+              uid,
+              error:
+                String(
+                  error?.message
+                  ?? error
+                ),
+            }
+          );
+        }
+
+        if (
+          typeof notifyGroupMatchCreated
+          === "function"
+        ) {
+          try {
+            await notifyGroupMatchCreated({
+              groupId:
+                targetGroupId,
+
+              group:
+                targetGroupContext
+                  ?.group
+                  ?? {},
+
+              matchId,
+
+              creatorUid:
+                uid,
+
+              creatorProfile,
+
+              match:
+                result.match,
+            });
+          } catch (error) {
+            logger?.warn?.(
+              "updateMatchDistribution group notification ignored failure",
+              {
+                matchId,
+                groupId:
+                  targetGroupId,
+                uid,
+                error:
+                  String(
+                    error?.message
+                    ?? error
+                  ),
+              }
+            );
+          }
+        }
+      }
 
       logger?.info?.(
         result.changed

@@ -1590,6 +1590,7 @@ export const updateMatchDistribution =
     db,
     FieldValue,
     logger,
+    notifyGroupMatchCreated,
   });
 
 
