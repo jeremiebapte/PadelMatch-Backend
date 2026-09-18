@@ -126,6 +126,10 @@ import {
 } from "./domain/activity/MatchPushNotificationService.js";
 
 import {
+  buildFcmTokenCleanupService,
+} from "./domain/notifications/FcmTokenCleanupService.js";
+
+import {
   buildNotifyGroupMatchCreated,
   buildNotifyGroupMatchUpdated,
   buildNotifyGroupMatchCancelled,
@@ -208,6 +212,15 @@ initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
 const authAdmin = getAuth();
+
+const {
+  rememberTokenOwners,
+  cleanupInvalidTokensFromResponse,
+} =
+  buildFcmTokenCleanupService({
+    db,
+    logger,
+  });
 
 const recordGroupActivity =
   createGroupActivityRecorder({
@@ -597,11 +610,37 @@ function appendClubEvent(
 }
 
 async function tokensOf(uid) {
-  const u = await db.collection("users").doc(uid).get();
+  const u =
+    await db
+      .collection("users")
+      .doc(uid)
+      .get();
+
   if (!u.exists) return [];
-  if (u.get("notificationsEnabled") !== true) return [];
-  const snap = await u.ref.collection("fcmTokens").get();
-  return snap.docs.map((x) => x.id);
+
+  if (
+    u.get("notificationsEnabled")
+    !== true
+  ) {
+    return [];
+  }
+
+  const snap =
+    await u.ref
+      .collection("fcmTokens")
+      .get();
+
+  const tokens =
+    snap.docs.map(
+      (x) => x.id
+    );
+
+  rememberTokenOwners(
+    uid,
+    tokens
+  );
+
+  return tokens;
 }
 
 async function getTokens(uids) {
@@ -738,9 +777,31 @@ async function sendDataOnly(tokens, { data }) {
     });
 
     if (res.failureCount) {
+      const cleanup =
+        await cleanupInvalidTokensFromResponse(
+          tokens,
+          res,
+          {
+            sender:
+              "sendDataOnly",
+          }
+        );
+
       logger.warn("sendDataOnly multicast failures", {
-        failureCount: res.failureCount,
-        successCount: res.successCount,
+        failureCount:
+          res.failureCount,
+
+        successCount:
+          res.successCount,
+
+        invalidTokensRemoved:
+          cleanup.invalidTokensRemoved,
+
+        permanentFailures:
+          cleanup.permanentFailures,
+
+        temporaryFailures:
+          cleanup.temporaryFailures,
       });
     }
   } catch (e) {
@@ -770,9 +831,31 @@ async function sendChatHybrid(tokens, { title, body, data }) {
     });
 
     if (res.failureCount) {
+      const cleanup =
+        await cleanupInvalidTokensFromResponse(
+          tokens,
+          res,
+          {
+            sender:
+              "sendChatHybrid",
+          }
+        );
+
       logger.warn("sendChatHybrid multicast failures", {
-        failureCount: res.failureCount,
-        successCount: res.successCount,
+        failureCount:
+          res.failureCount,
+
+        successCount:
+          res.successCount,
+
+        invalidTokensRemoved:
+          cleanup.invalidTokensRemoved,
+
+        permanentFailures:
+          cleanup.permanentFailures,
+
+        temporaryFailures:
+          cleanup.temporaryFailures,
       });
     }
   } catch (e) {
@@ -808,9 +891,31 @@ async function sendVisibleHybrid(tokens, { title, body, data }) {
     });
 
     if (res.failureCount) {
+      const cleanup =
+        await cleanupInvalidTokensFromResponse(
+          tokens,
+          res,
+          {
+            sender:
+              "sendVisibleHybrid",
+          }
+        );
+
       logger.warn("sendVisibleHybrid multicast failures", {
-        failureCount: res.failureCount,
-        successCount: res.successCount,
+        failureCount:
+          res.failureCount,
+
+        successCount:
+          res.successCount,
+
+        invalidTokensRemoved:
+          cleanup.invalidTokensRemoved,
+
+        permanentFailures:
+          cleanup.permanentFailures,
+
+        temporaryFailures:
+          cleanup.temporaryFailures,
       });
     }
   } catch (e) {
@@ -851,9 +956,31 @@ async function send(tokens, { title, body, data }) {
     });
 
     if (res.failureCount) {
+      const cleanup =
+        await cleanupInvalidTokensFromResponse(
+          tokens,
+          res,
+          {
+            sender:
+              "send",
+          }
+        );
+
       logger.warn("send multicast failures", {
-        failureCount: res.failureCount,
-        successCount: res.successCount,
+        failureCount:
+          res.failureCount,
+
+        successCount:
+          res.successCount,
+
+        invalidTokensRemoved:
+          cleanup.invalidTokensRemoved,
+
+        permanentFailures:
+          cleanup.permanentFailures,
+
+        temporaryFailures:
+          cleanup.temporaryFailures,
       });
     }
   } catch (e) {
