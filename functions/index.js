@@ -1597,12 +1597,23 @@ export const updateMatchDistribution =
   });
 
 
+const notifyPublicMatchCreated =
+  async ({
+    matchId,
+  }) => {
+    await pushNearbyForMatchId(
+      matchId
+    );
+  };
+
+
 const processMatchDistributionEventHandler =
   buildProcessMatchDistributionEvent({
     db,
     FieldValue,
     logger,
     notifyGroupMatchCreated,
+    notifyPublicMatchCreated,
   });
 
 

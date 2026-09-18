@@ -29,7 +29,9 @@ import {
 
 import {
   MATCH_DISTRIBUTION_EVENT_TYPE,
+  MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE,
   matchDistributionEventId,
+  matchPublicDistributionEventId,
 } from "./MatchDistributionEffectService.js";
 
 
@@ -452,6 +454,11 @@ export function buildUpdateMatchDistribution({
                 match
               );
 
+            const wasAlreadyPublic =
+              before
+                .distribution
+                .public === true;
+
             const wasAlreadyInTargetGroup =
               targetGroupId
                 ? before
@@ -508,6 +515,14 @@ export function buildUpdateMatchDistribution({
                 }
               );
 
+            const publicAdded =
+              Boolean(
+                !wasAlreadyPublic
+                && after
+                  .distribution
+                  .public === true
+              );
+
             const targetGroupAdded =
               Boolean(
                 targetGroupId
@@ -529,6 +544,9 @@ export function buildUpdateMatchDistribution({
 
                 distribution:
                   after.distribution,
+
+                publicAdded:
+                  false,
 
                 targetGroupAdded:
                   false,
@@ -562,6 +580,69 @@ export function buildUpdateMatchDistribution({
               }
             );
 
+            const matchAfter = {
+              ...match,
+              origin:
+                after.origin,
+              distribution:
+                after.distribution,
+            };
+
+            if (publicAdded) {
+              const eventId =
+                matchPublicDistributionEventId(
+                  matchId
+                );
+
+              const eventRef =
+                db
+                  .collection(
+                    "matchDistributionEvents"
+                  )
+                  .doc(eventId);
+
+              tx.create(
+                eventRef,
+                {
+                  eventId,
+
+                  schemaVersion: 1,
+
+                  type:
+                    MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE,
+
+                  status:
+                    "pending",
+
+                  matchId,
+
+                  actorUid:
+                    uid,
+
+                  creatorProfile: {
+                    pseudo:
+                      asString(
+                        match
+                          .createurPseudo
+                      ),
+
+                    avatar:
+                      asString(
+                        match
+                          .createurAvatar
+                      ),
+                  },
+
+                  matchSnapshot:
+                    matchAfter,
+
+                  createdAt:
+                    FieldValue
+                      .serverTimestamp(),
+                }
+              );
+            }
+
             if (
               targetGroupAdded
               && targetGroupId
@@ -578,14 +659,6 @@ export function buildUpdateMatchDistribution({
                     "matchDistributionEvents"
                   )
                   .doc(eventId);
-
-              const matchAfter = {
-                ...match,
-                origin:
-                  after.origin,
-                distribution:
-                  after.distribution,
-              };
 
               tx.create(
                 eventRef,
@@ -641,6 +714,8 @@ export function buildUpdateMatchDistribution({
               distribution:
                 after.distribution,
 
+              publicAdded,
+
               targetGroupAdded,
 
               targetGroupMembershipId:
@@ -665,6 +740,11 @@ export function buildUpdateMatchDistribution({
             result
               .targetGroupMembershipId
             ?? null,
+
+          publicAdded:
+            result
+              .publicAdded
+            === true,
 
           targetGroupAdded:
             result

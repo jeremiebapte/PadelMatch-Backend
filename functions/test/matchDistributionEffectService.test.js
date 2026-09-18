@@ -11,7 +11,11 @@ function clone(value) {
 }
 
 
-function makeDb() {
+function makeDb({
+  eventType = "group_distribution_added",
+  eventId = "match_distribution__match_1__group_B",
+  groupId = "group_B",
+} = {}) {
   const docs =
     new Map();
 
@@ -24,14 +28,13 @@ function makeDb() {
   docs.set(
     key(
       "matchDistributionEvents",
-      "match_distribution__match_1__group_B"
+      eventId
     ),
     {
-      eventId:
-        "match_distribution__match_1__group_B",
+      eventId,
 
       type:
-        "group_distribution_added",
+        eventType,
 
       status:
         "pending",
@@ -39,8 +42,7 @@ function makeDb() {
       matchId:
         "match_1",
 
-      groupId:
-        "group_B",
+      groupId,
 
       actorUid:
         "user_A",
@@ -354,6 +356,113 @@ test(
       db.get(
         "matchDistributionEvents",
         "match_distribution__match_1__group_B"
+      );
+
+    assert.ok(
+      effect.coreProcessedAt
+    );
+
+    assert.ok(
+      effect.notificationSentAt
+    );
+
+    assert.equal(
+      effect.status,
+      "processed"
+    );
+  }
+);
+
+
+test(
+  "public distribution event sends nearby notification once without group side effects",
+  async () => {
+    const eventId =
+      "match_distribution__match_1__public";
+
+    const db =
+      makeDb({
+        eventType:
+          "public_distribution_added",
+
+        eventId,
+
+        groupId:
+          "",
+      });
+
+    const publicNotifications =
+      [];
+
+    const processor =
+      buildProcessMatchDistributionEvent({
+        db,
+        FieldValue,
+        logger: {},
+
+        notifyGroupMatchCreated:
+          async () => {
+            throw new Error(
+              "GROUP_NOTIFICATION_SHOULD_NOT_RUN"
+            );
+          },
+
+        notifyPublicMatchCreated:
+          async (payload) => {
+            publicNotifications.push(
+              payload
+            );
+          },
+      });
+
+    const event = {
+      params: {
+        eventId,
+      },
+    };
+
+    await processor(event);
+    await processor(event);
+
+    const activityCreates =
+      db.creates.filter(
+        (write) =>
+          write.collection
+            === "groupActivities"
+      );
+
+    assert.equal(
+      activityCreates.length,
+      0
+    );
+
+    const groupUpdates =
+      db.updates.filter(
+        (write) =>
+          write.collection
+            === "groups"
+      );
+
+    assert.equal(
+      groupUpdates.length,
+      0
+    );
+
+    assert.equal(
+      publicNotifications.length,
+      1
+    );
+
+    assert.equal(
+      publicNotifications[0]
+        .matchId,
+      "match_1"
+    );
+
+    const effect =
+      db.get(
+        "matchDistributionEvents",
+        eventId
       );
 
     assert.ok(

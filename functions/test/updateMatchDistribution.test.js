@@ -288,11 +288,24 @@ test(
       ]
     );
 
+    const events =
+      db.getEventWrites();
+
     assert.equal(
-      db
-        .getEventWrites()
-        .length,
-      0
+      events.length,
+      1
+    );
+
+    assert.equal(
+      events[0].id,
+      "match_distribution__match_1__public"
+    );
+
+    assert.equal(
+      events[0]
+        .value
+        .type,
+      "public_distribution_added"
     );
   }
 );
@@ -554,7 +567,7 @@ test(
 
 
 test(
-  "making public only creates no group outbox event",
+  "making public creates deterministic public outbox event",
   async () => {
     const db =
       makeDb({
@@ -586,11 +599,24 @@ test(
       true
     );
 
+    const events =
+      db.getEventWrites();
+
     assert.equal(
-      db
-        .getEventWrites()
-        .length,
-      0
+      events.length,
+      1
+    );
+
+    assert.equal(
+      events[0].id,
+      "match_distribution__match_1__public"
+    );
+
+    assert.equal(
+      events[0]
+        .value
+        .type,
+      "public_distribution_added"
     );
   }
 );

@@ -25,11 +25,22 @@ export const MATCH_DISTRIBUTION_EVENT_TYPE =
   "group_distribution_added";
 
 
+export const MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE =
+  "public_distribution_added";
+
+
 export function matchDistributionEventId(
   matchId,
   groupId
 ) {
   return `match_distribution__${matchId}__${groupId}`;
+}
+
+
+export function matchPublicDistributionEventId(
+  matchId
+) {
+  return `match_distribution__${matchId}__public`;
 }
 
 
@@ -64,6 +75,7 @@ export function buildProcessMatchDistributionEvent({
   FieldValue,
   logger,
   notifyGroupMatchCreated,
+  notifyPublicMatchCreated,
 }) {
   if (!db) {
     throw new Error("DB_REQUIRED");
@@ -114,10 +126,18 @@ export function buildProcessMatchDistributionEvent({
             eventSnapshot.data()
             || {};
 
-          if (
-            effect.type
-            !== MATCH_DISTRIBUTION_EVENT_TYPE
-          ) {
+          const effectType =
+            asString(
+              effect.type
+            );
+
+          const supportedType =
+            effectType
+              === MATCH_DISTRIBUTION_EVENT_TYPE
+            || effectType
+              === MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE;
+
+          if (!supportedType) {
             return {
               exists: true,
               ignored: true,
@@ -149,10 +169,41 @@ export function buildProcessMatchDistributionEvent({
             );
 
           if (
-            !groupId
-            || !matchId
+            !matchId
             || !actorUid
           ) {
+            throw new Error(
+              "INVALID_MATCH_DISTRIBUTION_EVENT"
+            );
+          }
+
+          if (
+            effectType
+            === MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE
+          ) {
+            tx.set(
+              eventRef,
+              {
+                status:
+                  "core_processed",
+
+                coreProcessedAt:
+                  FieldValue
+                    .serverTimestamp(),
+              },
+              {
+                merge: true,
+              }
+            );
+
+            return {
+              exists: true,
+              processedNow: true,
+              effect,
+            };
+          }
+
+          if (!groupId) {
             throw new Error(
               "INVALID_MATCH_DISTRIBUTION_EVENT"
             );
@@ -430,6 +481,11 @@ export function buildProcessMatchDistributionEvent({
       latestSnapshot.data()
       || {};
 
+    const effectType =
+      asString(
+        effect.type
+      );
+
     const groupId =
       asString(
         effect.groupId
@@ -447,8 +503,10 @@ export function buildProcessMatchDistributionEvent({
 
     try {
       if (
-        typeof notifyGroupMatchCreated
-        === "function"
+        effectType
+          === MATCH_DISTRIBUTION_EVENT_TYPE
+        && typeof notifyGroupMatchCreated
+          === "function"
       ) {
         const groupSnapshot =
           await db
@@ -484,6 +542,24 @@ export function buildProcessMatchDistributionEvent({
         });
       }
 
+      if (
+        effectType
+          === MATCH_PUBLIC_DISTRIBUTION_EVENT_TYPE
+        && typeof notifyPublicMatchCreated
+          === "function"
+      ) {
+        await notifyPublicMatchCreated({
+          matchId,
+
+          creatorUid:
+            actorUid,
+
+          match:
+            effect.matchSnapshot
+            || {},
+        });
+      }
+
       await eventRef.set(
         {
           status:
@@ -508,7 +584,10 @@ export function buildProcessMatchDistributionEvent({
         "match distribution event processed",
         {
           eventId,
-          groupId,
+          type:
+            effectType,
+          groupId:
+            groupId || null,
           matchId,
         }
       );
