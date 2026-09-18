@@ -77,6 +77,34 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "distribution.public",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dateHeure",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "distribution.groupIds",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "dateHeure",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
