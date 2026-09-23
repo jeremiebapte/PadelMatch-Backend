@@ -57,8 +57,12 @@ service firebase.storage {
       allow write: if request.auth != null
         && request.auth.uid == senderUid
         && senderUid != receiverUid
+        && request.resource != null
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('audio/.*');
+
+      allow delete: if request.auth != null
+        && request.auth.uid == senderUid;
     }
 
     /*
@@ -82,8 +86,12 @@ service firebase.storage {
         && firestore.get(
           /databases/(default)/documents/groupMemberships/$(groupId + '_' + request.auth.uid)
         ).data.status == 'active'
+        && request.resource != null
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('audio/.*');
+
+      allow delete: if request.auth != null
+        && request.auth.uid == senderUid;
     }
 
     /*
@@ -120,8 +128,12 @@ service firebase.storage {
         && receiverUid in firestore.get(
           /databases/(default)/documents/playerConversations/$(conversationId)
         ).data.participantUids
+        && request.resource != null
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('audio/.*');
+
+      allow delete: if request.auth != null
+        && request.auth.uid == senderUid;
     }
   }
 }

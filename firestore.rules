@@ -633,8 +633,6 @@ service cloud.firestore {
             || data.messageType == 'text'
             || (
               data.messageType == 'audio'
-              && data.audioUrl is string
-              && data.audioUrl.size() > 0
               && data.audioStoragePath is string
               && data.audioStoragePath.size() > 0
               && (
