@@ -35,5 +35,93 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
+
+
+    // =========================================================
+    // CHAT AUDIO V1
+    // =========================================================
+
+    /*
+     * Match privé :
+     * senderUid / receiverUid sont encodés dans le chemin.
+     * Seuls les deux participants peuvent lire.
+     * Seul l'expéditeur peut écrire.
+     */
+    match /chatAudio/match/{matchId}/{senderUid}/{receiverUid}/{fileName} {
+      allow read: if request.auth != null
+        && (
+          request.auth.uid == senderUid
+          || request.auth.uid == receiverUid
+        );
+
+      allow write: if request.auth != null
+        && request.auth.uid == senderUid
+        && senderUid != receiverUid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+    }
+
+    /*
+     * Groupe :
+     * lecture/écriture réservées aux memberships actifs.
+     */
+    match /chatAudio/group/{groupId}/{senderUid}/{fileName} {
+      allow read: if request.auth != null
+        && firestore.exists(
+          /databases/(default)/documents/groupMemberships/$(groupId + '_' + request.auth.uid)
+        )
+        && firestore.get(
+          /databases/(default)/documents/groupMemberships/$(groupId + '_' + request.auth.uid)
+        ).data.status == 'active';
+
+      allow write: if request.auth != null
+        && request.auth.uid == senderUid
+        && firestore.exists(
+          /databases/(default)/documents/groupMemberships/$(groupId + '_' + request.auth.uid)
+        )
+        && firestore.get(
+          /databases/(default)/documents/groupMemberships/$(groupId + '_' + request.auth.uid)
+        ).data.status == 'active'
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+    }
+
+    /*
+     * Conversation joueur :
+     * le document playerConversations reste la source d'autorité.
+     */
+    match /chatAudio/player/{conversationId}/{senderUid}/{receiverUid}/{fileName} {
+      allow read: if request.auth != null
+        && firestore.exists(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        )
+        && firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.status == 'active'
+        && firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.participantUids is list
+        && request.auth.uid in firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.participantUids;
+
+      allow write: if request.auth != null
+        && request.auth.uid == senderUid
+        && senderUid != receiverUid
+        && firestore.exists(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        )
+        && firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.status == 'active'
+        && senderUid in firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.participantUids
+        && receiverUid in firestore.get(
+          /databases/(default)/documents/playerConversations/$(conversationId)
+        ).data.participantUids
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+    }
   }
 }
