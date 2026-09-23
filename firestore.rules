@@ -625,6 +625,26 @@ service cloud.firestore {
           || data.timestamp is float;
       }
 
+      function hasValidMessageContent(data) {
+        return data.text is string
+          && data.text.size() > 0
+          && (
+            !('messageType' in data)
+            || data.messageType == 'text'
+            || (
+              data.messageType == 'audio'
+              && data.audioStoragePath is string
+              && data.audioStoragePath.size() > 0
+              && (
+                data.audioDurationMs is int
+                || data.audioDurationMs is float
+              )
+              && data.audioDurationMs > 0
+              && data.audioDurationMs <= 300000
+            )
+          );
+      }
+
       function canReadGroupMessage(data) {
         return isGroupMessage(data)
           && hasActiveGroupMembership(data.groupId);
@@ -662,8 +682,9 @@ service cloud.firestore {
        */
       allow create: if signedIn()
         && request.resource.data.senderUid == uid()
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
+        && hasValidMessageContent(
+          request.resource.data
+        )
         && hasValidMessageTimestamp(request.resource.data)
         && isMatchMessage(request.resource.data);
 
@@ -676,8 +697,9 @@ service cloud.firestore {
         && request.resource.data.senderUid == uid()
         && request.resource.data.conversationType == 'group'
         && request.resource.data.groupId is string
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
+        && hasValidMessageContent(
+          request.resource.data
+        )
         && hasValidMessageTimestamp(request.resource.data)
         && hasActiveGroupMembership(
           request.resource.data.groupId
@@ -695,8 +717,9 @@ service cloud.firestore {
         && request.resource.data.conversationType == 'player'
         && request.resource.data.conversationId is string
         && request.resource.data.receiverUid is string
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
+        && hasValidMessageContent(
+          request.resource.data
+        )
         && hasValidMessageTimestamp(request.resource.data)
         && hasActivePlayerConversation(
           request.resource.data
@@ -713,6 +736,10 @@ service cloud.firestore {
         && (
           (
             resource.data.senderUid == uid()
+            && (
+              !('messageType' in resource.data)
+              || resource.data.messageType == 'text'
+            )
             && request.resource.data.senderUid
                  == resource.data.senderUid
             && request.resource.data.diff(resource.data)
