@@ -79,6 +79,7 @@ service cloud.firestore {
         || (
           data.playFrequency is string
           && data.playFrequency in [
+            '',
             'occasionally',
             'oncePerWeek',
             'severalTimesPerWeek',
@@ -95,7 +96,13 @@ service cloud.firestore {
           && data.goals.hasOnly([
             'playMore',
             'findPartners',
+
+            // Ancienne valeur conservée pour les profils existants.
             'improve',
+
+            // Onboarding V2 actuel.
+            'findCoaches',
+
             'compete',
             'haveFun',
             'discoverClubs'
