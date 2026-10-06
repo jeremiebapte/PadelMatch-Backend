@@ -79,6 +79,7 @@ service cloud.firestore {
         || (
           data.playFrequency is string
           && data.playFrequency in [
+            '',
             'occasionally',
             'oncePerWeek',
             'severalTimesPerWeek',
@@ -95,7 +96,13 @@ service cloud.firestore {
           && data.goals.hasOnly([
             'playMore',
             'findPartners',
+
+            // Ancienne valeur conservée pour les profils existants.
             'improve',
+
+            // Onboarding V2 actuel.
+            'findCoaches',
+
             'compete',
             'haveFun',
             'discoverClubs'
@@ -132,13 +139,17 @@ service cloud.firestore {
       allow update: if signedIn() && userId == uid()
         && onlyKeysChanged([
           'pseudo','pseudoLower',
-          'avatar','niveau','level','notificationsEnabled',
+          'avatar','avatarId','photoUrl','profileImageType',
+          'niveau','level','notificationsEnabled',
           'notifLat','notifLng','notifRadiusKm',
           'handedness','playFrequency','goals',
+          'preferredDays','preferredTimeSlots','searchRadiusKm',
+          'favoriteClubIds','favoriteClubs',
+          'onboardingVersion',
           'profileUpdatedAt',
           'isPublicProfile','isDiscoverable','privacyUpdatedAt',
-          'lat','lng','locationUpdatedAt',
-          'nom','prenom','photoUrl','email',
+          'lat','lng','city','locationUpdatedAt',
+          'nom','prenom','email',
           'createdAt','updatedAt',
           'fcmToken','fcmPlatform','fcmUpdatedAt',
           'onboardingCompleted','onboardingCompletedAt'
