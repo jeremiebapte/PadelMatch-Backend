@@ -132,13 +132,17 @@ service cloud.firestore {
       allow update: if signedIn() && userId == uid()
         && onlyKeysChanged([
           'pseudo','pseudoLower',
-          'avatar','niveau','level','notificationsEnabled',
+          'avatar','avatarId','photoUrl','profileImageType',
+          'niveau','level','notificationsEnabled',
           'notifLat','notifLng','notifRadiusKm',
           'handedness','playFrequency','goals',
+          'preferredDays','preferredTimeSlots','searchRadiusKm',
+          'favoriteClubIds','favoriteClubs',
+          'onboardingVersion',
           'profileUpdatedAt',
           'isPublicProfile','isDiscoverable','privacyUpdatedAt',
-          'lat','lng','locationUpdatedAt',
-          'nom','prenom','photoUrl','email',
+          'lat','lng','city','locationUpdatedAt',
+          'nom','prenom','email',
           'createdAt','updatedAt',
           'fcmToken','fcmPlatform','fcmUpdatedAt',
           'onboardingCompleted','onboardingCompletedAt'
