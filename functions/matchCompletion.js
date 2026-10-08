@@ -1,19 +1,15 @@
 /**
  * Padima — Match Completion V1
  *
- * Réservation externe du terrain.
+ * La réservation est privée et server-authoritative.
  *
- * Le match reste la source de vérité :
+ * Stockage :
+ * matchCompletions/{matchId}
  *
- * completion: {
- *   reservationStatus: "reserved",
- *   reservationUrl: "https://...",
- *   reservationProvider: "4padel|matchi|anybuddy|external",
- *   reservationSharedAt: Timestamp,
- *   reservationSharedByUid: uid,
- *   reservationConfirmedUids: [uid...]
- * }
+ * Le document public matches/{matchId} ne contient
+ * jamais le lien de réservation.
  */
+
 
 function asString(value) {
   return typeof value === "string"
@@ -207,39 +203,19 @@ function providerForUrl(url) {
     return "external";
   }
 
-  if (
-    hostname.includes("4padel")
-  ) {
+  if (hostname.includes("4padel")) {
     return "4padel";
   }
 
-  if (
-    hostname.includes("matchi")
-  ) {
+  if (hostname.includes("matchi")) {
     return "matchi";
   }
 
-  if (
-    hostname.includes("anybuddy")
-  ) {
+  if (hostname.includes("anybuddy")) {
     return "anybuddy";
   }
 
   return "external";
-}
-
-
-function completionOf(match = {}) {
-  const value =
-    match.completion;
-
-  return (
-    value
-    && typeof value === "object"
-    && !Array.isArray(value)
-  )
-    ? value
-    : {};
 }
 
 
@@ -268,18 +244,107 @@ function confirmedUidsOf(
 }
 
 
+function completionOf(
+  value = {}
+) {
+  const source =
+    (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+    )
+      ? value
+      : {};
+
+  const reservationUrl =
+    asString(
+      source.reservationUrl
+    );
+
+  const reservationStatus =
+    (
+      asString(
+        source.reservationStatus
+      ) === "reserved"
+      && reservationUrl
+    )
+      ? "reserved"
+      : "awaiting_reservation";
+
+  return {
+    reservationStatus,
+
+    reservationUrl:
+      reservationUrl || null,
+
+    reservationProvider:
+      asString(
+        source.reservationProvider
+      ) || null,
+
+    reservationSharedAt:
+      source.reservationSharedAt
+      ?? null,
+
+    reservationSharedByUid:
+      asString(
+        source.reservationSharedByUid
+      ) || null,
+
+    reservationConfirmedUids:
+      confirmedUidsOf(source),
+  };
+}
+
+
+function emptyCompletion() {
+  return {
+    reservationStatus:
+      "awaiting_reservation",
+
+    reservationUrl:
+      null,
+
+    reservationProvider:
+      null,
+
+    reservationSharedAt:
+      null,
+
+    reservationSharedByUid:
+      null,
+
+    reservationConfirmedUids:
+      [],
+  };
+}
+
+
+function canReadCompletion(
+  match,
+  uid
+) {
+  if (!uid) {
+    return false;
+  }
+
+  if (
+    creatorUidOf(match) === uid
+  ) {
+    return true;
+  }
+
+  return realParticipantUids(match)
+    .includes(uid);
+}
+
+
 export function reconcileMatchCompletionAfterParticipantsChange({
   completion,
   participants,
 }) {
   const safeCompletion =
-    (
-      completion
-      && typeof completion === "object"
-      && !Array.isArray(completion)
-    )
-      ? completion
-      : {};
+    completionOf(completion);
 
   if (
     safeCompletion
@@ -373,11 +438,13 @@ async function notifyUsers({
       );
 
       sentUserCount += 1;
+
     } catch (error) {
       logger?.warn?.(
         "match completion notification ignored recipient failure",
         {
           recipientUid,
+
           error:
             String(
               error?.message
@@ -397,7 +464,9 @@ export function buildNotifyMatchCompletionAfterJoin({
   sendVisibleHybrid,
   logger,
 }) {
-  if (typeof tokensOf !== "function") {
+  if (
+    typeof tokensOf !== "function"
+  ) {
     throw new TypeError(
       "TOKENS_OF_REQUIRED"
     );
@@ -415,6 +484,7 @@ export function buildNotifyMatchCompletionAfterJoin({
   return async function notifyMatchCompletionAfterJoin({
     matchId,
     match = {},
+    completion = {},
     joinedUid,
     becameFull = false,
   }) {
@@ -424,18 +494,15 @@ export function buildNotifyMatchCompletionAfterJoin({
     const creatorUid =
       creatorUidOf(match);
 
-    const completion =
-      completionOf(match);
-
-    const reservationUrl =
-      asString(
-        completion.reservationUrl
-      );
+    const safeCompletion =
+      completionOf(completion);
 
     const hasReservation =
-      completion.reservationStatus
+      safeCompletion
+        .reservationStatus
         === "reserved"
-      && !!reservationUrl;
+      && !!safeCompletion
+        .reservationUrl;
 
     const place =
       asString(
@@ -443,11 +510,6 @@ export function buildNotifyMatchCompletionAfterJoin({
         || match.placeName
       );
 
-    /*
-     * Cas remplacement :
-     * le terrain était déjà réservé avant
-     * que ce joueur rejoigne.
-     */
     if (
       actorUid
       && hasReservation
@@ -460,9 +522,7 @@ export function buildNotifyMatchCompletionAfterJoin({
           ],
 
           tokensOf,
-
           sendVisibleHybrid,
-
           logger,
 
           title:
@@ -499,12 +559,6 @@ export function buildNotifyMatchCompletionAfterJoin({
       };
     }
 
-    /*
-     * Cas normal :
-     * le dernier joueur vient de compléter
-     * le match et aucun terrain n'est encore
-     * renseigné.
-     */
     if (
       becameFull
       && creatorUid
@@ -517,9 +571,7 @@ export function buildNotifyMatchCompletionAfterJoin({
           ],
 
           tokensOf,
-
           sendVisibleHybrid,
-
           logger,
 
           title:
@@ -561,6 +613,93 @@ export function buildNotifyMatchCompletionAfterJoin({
       sentUserCount: 0,
     };
   };
+}
+
+
+export function buildGetMatchCompletion({
+  onCall,
+  HttpsError,
+  runtime,
+  db,
+}) {
+  return onCall(
+    runtime,
+    async (request) => {
+      const uid =
+        request.auth?.uid;
+
+      if (!uid) {
+        throw new HttpsError(
+          "unauthenticated",
+          "AUTH_REQUIRED"
+        );
+      }
+
+      const matchId =
+        asString(
+          request.data?.matchId
+        );
+
+      if (!matchId) {
+        throw new HttpsError(
+          "invalid-argument",
+          "MATCH_ID_REQUIRED"
+        );
+      }
+
+      const matchRef =
+        db.collection("matches")
+          .doc(matchId);
+
+      const completionRef =
+        db.collection(
+          "matchCompletions"
+        )
+          .doc(matchId);
+
+      const [
+        matchSnap,
+        completionSnap,
+      ] = await Promise.all([
+        matchRef.get(),
+        completionRef.get(),
+      ]);
+
+      if (!matchSnap.exists) {
+        throw new HttpsError(
+          "not-found",
+          "MATCH_NOT_FOUND"
+        );
+      }
+
+      const match =
+        matchSnap.data() ?? {};
+
+      if (
+        !canReadCompletion(
+          match,
+          uid
+        )
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "NOT_MATCH_PARTICIPANT"
+        );
+      }
+
+      return {
+        ok: true,
+        matchId,
+
+        completion:
+          completionOf(
+            completionSnap.exists
+              ? completionSnap.data()
+              : {}
+          ),
+      };
+    }
+  );
 }
 
 
@@ -615,6 +754,12 @@ export function buildSetMatchReservation({
         db.collection("matches")
           .doc(matchId);
 
+      const completionRef =
+        db.collection(
+          "matchCompletions"
+        )
+          .doc(matchId);
+
       let notificationRecipients = [];
       let notificationPlace = "";
       let changed = false;
@@ -625,6 +770,11 @@ export function buildSetMatchReservation({
           const matchSnap =
             await transaction.get(
               matchRef
+            );
+
+          const completionSnap =
+            await transaction.get(
+              completionRef
             );
 
           if (!matchSnap.exists) {
@@ -663,28 +813,22 @@ export function buildSetMatchReservation({
           }
 
           const currentCompletion =
-            completionOf(match);
-
-          const currentUrl =
-            asString(
-              currentCompletion
-                .reservationUrl
+            completionOf(
+              completionSnap.exists
+                ? completionSnap.data()
+                : {}
             );
 
-          /*
-           * Même lien déjà enregistré :
-           * aucun nouveau push.
-           */
           if (
             currentCompletion
               .reservationStatus
               === "reserved"
-            && currentUrl
+            && currentCompletion
+              .reservationUrl
               === reservationUrl
           ) {
-            responseCompletion = {
-              ...currentCompletion,
-            };
+            responseCompletion =
+              currentCompletion;
 
             return;
           }
@@ -694,19 +838,6 @@ export function buildSetMatchReservation({
               match
             );
 
-          const previousConfirmed =
-            confirmedUidsOf(
-              currentCompletion
-            );
-
-          /*
-           * Lors d'un remplacement du lien,
-           * on conserve seulement le créateur
-           * comme confirmé.
-           *
-           * Les autres doivent confirmer le
-           * nouveau lien de réservation.
-           */
           const confirmedUids =
             participants.includes(
               creatorUid
@@ -719,6 +850,8 @@ export function buildSetMatchReservation({
               .serverTimestamp();
 
           const completion = {
+            matchId,
+
             reservationStatus:
               "reserved",
 
@@ -734,22 +867,26 @@ export function buildSetMatchReservation({
 
             reservationConfirmedUids:
               confirmedUids,
+
+            updatedAt:
+              now,
           };
 
-          transaction.update(
-            matchRef,
-            {
-              completion,
-
-              updatedAt:
-                now,
-            }
+          transaction.set(
+            completionRef,
+            completion
           );
 
           changed = true;
 
-          responseCompletion =
-            completion;
+          responseCompletion = {
+            ...completionOf(
+              completion
+            ),
+
+            reservationSharedAt:
+              null,
+          };
 
           notificationRecipients =
             participants.filter(
@@ -763,8 +900,6 @@ export function buildSetMatchReservation({
               match.lieu
               || match.placeName
             );
-
-          void previousConfirmed;
         }
       );
 
@@ -782,9 +917,7 @@ export function buildSetMatchReservation({
               notificationRecipients,
 
             tokensOf,
-
             sendVisibleHybrid,
-
             logger,
 
             title:
@@ -814,8 +947,10 @@ export function buildSetMatchReservation({
         ok: true,
         changed,
         matchId,
+
         completion:
           responseCompletion,
+
         notifiedUserCount:
           sentUserCount,
       };
@@ -863,6 +998,12 @@ export function buildConfirmMatchReservation({
         db.collection("matches")
           .doc(matchId);
 
+      const completionRef =
+        db.collection(
+          "matchCompletions"
+        )
+          .doc(matchId);
+
       let changed = false;
       let creatorUid = "";
       let actorPseudo = "";
@@ -871,9 +1012,6 @@ export function buildConfirmMatchReservation({
 
       await db.runTransaction(
         async (transaction) => {
-          /*
-           * Toutes les lectures avant writes.
-           */
           const matchSnap =
             await transaction.get(
               matchRef
@@ -886,6 +1024,11 @@ export function buildConfirmMatchReservation({
           const userSnap =
             await transaction.get(
               userRef
+            );
+
+          const completionSnap =
+            await transaction.get(
+              completionRef
             );
 
           if (!matchSnap.exists) {
@@ -918,16 +1061,18 @@ export function buildConfirmMatchReservation({
           }
 
           const completion =
-            completionOf(match);
+            completionOf(
+              completionSnap.exists
+                ? completionSnap.data()
+                : {}
+            );
 
           if (
             completion
               .reservationStatus
               !== "reserved"
-            || !asString(
-              completion
-                .reservationUrl
-            )
+            || !completion
+              .reservationUrl
           ) {
             throw new HttpsError(
               "failed-precondition",
@@ -945,17 +1090,17 @@ export function buildConfirmMatchReservation({
                 )
             );
 
+          creatorUid =
+            creatorUidOf(match);
+
+          confirmableCount =
+            participants.length;
+
           if (
             confirmed.includes(uid)
           ) {
-            creatorUid =
-              creatorUidOf(match);
-
             confirmedCount =
               confirmed.length;
-
-            confirmableCount =
-              participants.length;
 
             return;
           }
@@ -969,27 +1114,24 @@ export function buildConfirmMatchReservation({
             FieldValue
               .serverTimestamp();
 
-          transaction.update(
-            matchRef,
+          transaction.set(
+            completionRef,
             {
-              "completion.reservationConfirmedUids":
+              reservationConfirmedUids:
                 nextConfirmed,
 
               updatedAt:
                 now,
+            },
+            {
+              merge: true,
             }
           );
 
           changed = true;
 
-          creatorUid =
-            creatorUidOf(match);
-
           confirmedCount =
             nextConfirmed.length;
-
-          confirmableCount =
-            participants.length;
 
           const user =
             userSnap.exists
@@ -1017,9 +1159,7 @@ export function buildConfirmMatchReservation({
           ],
 
           tokensOf,
-
           sendVisibleHybrid,
-
           logger,
 
           title:
@@ -1052,6 +1192,7 @@ export function buildConfirmMatchReservation({
         matchId,
         confirmedCount,
         confirmableCount,
+
         allConfirmed:
           confirmableCount > 0
           && confirmedCount
@@ -1098,6 +1239,12 @@ export function buildUnconfirmMatchReservation({
         db.collection("matches")
           .doc(matchId);
 
+      const completionRef =
+        db.collection(
+          "matchCompletions"
+        )
+          .doc(matchId);
+
       let changed = false;
       let confirmedCount = 0;
       let confirmableCount = 0;
@@ -1107,6 +1254,11 @@ export function buildUnconfirmMatchReservation({
           const matchSnap =
             await transaction.get(
               matchRef
+            );
+
+          const completionSnap =
+            await transaction.get(
+              completionRef
             );
 
           if (!matchSnap.exists) {
@@ -1122,11 +1274,6 @@ export function buildUnconfirmMatchReservation({
           const creatorUid =
             creatorUidOf(match);
 
-          /*
-           * Le créateur représente la personne
-           * ayant effectué la réservation.
-           * Sa confirmation reste donc verrouillée.
-           */
           if (
             creatorUid
             && creatorUid === uid
@@ -1152,7 +1299,11 @@ export function buildUnconfirmMatchReservation({
           }
 
           const completion =
-            completionOf(match);
+            completionOf(
+              completionSnap.exists
+                ? completionSnap.data()
+                : {}
+            );
 
           if (
             completion
@@ -1194,15 +1345,18 @@ export function buildUnconfirmMatchReservation({
             return;
           }
 
-          transaction.update(
-            matchRef,
+          transaction.set(
+            completionRef,
             {
-              "completion.reservationConfirmedUids":
+              reservationConfirmedUids:
                 nextConfirmed,
 
               updatedAt:
                 FieldValue
                   .serverTimestamp(),
+            },
+            {
+              merge: true,
             }
           );
 
@@ -1258,6 +1412,12 @@ export function buildClearMatchReservation({
         db.collection("matches")
           .doc(matchId);
 
+      const completionRef =
+        db.collection(
+          "matchCompletions"
+        )
+          .doc(matchId);
+
       let changed = false;
 
       await db.runTransaction(
@@ -1265,6 +1425,11 @@ export function buildClearMatchReservation({
           const matchSnap =
             await transaction.get(
               matchRef
+            );
+
+          const completionSnap =
+            await transaction.get(
+              completionRef
             );
 
           if (!matchSnap.exists) {
@@ -1291,42 +1456,27 @@ export function buildClearMatchReservation({
           }
 
           const current =
-            completionOf(match);
+            completionOf(
+              completionSnap.exists
+                ? completionSnap.data()
+                : {}
+            );
 
           if (
             current
               .reservationStatus
               !== "reserved"
-            && !asString(
-              current
-                .reservationUrl
-            )
+            && !current
+              .reservationUrl
           ) {
             return;
           }
 
-          transaction.update(
-            matchRef,
+          transaction.set(
+            completionRef,
             {
-              completion: {
-                reservationStatus:
-                  "awaiting_reservation",
-
-                reservationUrl:
-                  null,
-
-                reservationProvider:
-                  null,
-
-                reservationSharedAt:
-                  null,
-
-                reservationSharedByUid:
-                  null,
-
-                reservationConfirmedUids:
-                  [],
-              },
+              matchId,
+              ...emptyCompletion(),
 
               updatedAt:
                 FieldValue

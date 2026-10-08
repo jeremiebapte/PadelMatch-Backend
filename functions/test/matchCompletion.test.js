@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildGetMatchCompletion,
   buildSetMatchReservation,
   buildConfirmMatchReservation,
   buildUnconfirmMatchReservation,
@@ -49,9 +50,47 @@ function createEnvironment({
     const [path, data]
     of Object.entries(initialDocuments)
   ) {
+    const cloned =
+      clone(data);
+
+    if (
+      path.startsWith("matches/")
+      && cloned
+      && typeof cloned === "object"
+      && !Array.isArray(cloned)
+      && cloned.completion
+      && typeof cloned.completion === "object"
+      && !Array.isArray(
+        cloned.completion
+      )
+    ) {
+      const matchId =
+        path.split("/").at(-1);
+
+      const completion =
+        clone(cloned.completion);
+
+      delete cloned.completion;
+
+      store.set(
+        path,
+        cloned
+      );
+
+      store.set(
+        `matchCompletions/${matchId}`,
+        {
+          matchId,
+          ...completion,
+        }
+      );
+
+      continue;
+    }
+
     store.set(
       path,
-      clone(data)
+      cloned
     );
   }
 
@@ -217,6 +256,39 @@ function createEnvironment({
               clone(patch),
           });
         },
+
+
+        set(
+          reference,
+          data,
+          options = {}
+        ) {
+          const next =
+            options?.merge === true
+              ? applyPatch(
+                  store.get(
+                    reference.path
+                  ) ?? {},
+                  data
+                )
+              : clone(data);
+
+          store.set(
+            reference.path,
+            next
+          );
+
+          writes.push({
+            operation:
+              "set",
+            path:
+              reference.path,
+            data:
+              clone(data),
+            merge:
+              options?.merge === true,
+          });
+        },
       };
 
       return callback(
@@ -300,6 +372,21 @@ function createEnvironment({
 
 function buildCallables(env) {
   return {
+    getMatchCompletion:
+      buildGetMatchCompletion({
+        onCall:
+          env.onCall,
+
+        HttpsError:
+          env.HttpsError,
+
+        runtime:
+          env.runtime,
+
+        db:
+          env.db,
+      }),
+
     setMatchReservation:
       buildSetMatchReservation({
         onCall:
@@ -619,20 +706,34 @@ test(
         "matches/match_1"
       );
 
+    const completion =
+      env.document(
+        "matchCompletions/match_1"
+      );
+
     assert.equal(
-      match.completion
+      Object.prototype
+        .hasOwnProperty.call(
+          match,
+          "completion"
+        ),
+      false
+    );
+
+    assert.equal(
+      completion
         .reservationStatus,
       "reserved"
     );
 
     assert.equal(
-      match.completion
+      completion
         .reservationProvider,
       "4padel"
     );
 
     assert.deepEqual(
-      match.completion
+      completion
         .reservationConfirmedUids,
       [
         "owner_1",
@@ -693,8 +794,8 @@ test(
 
       assert.equal(
         env.document(
-          "matches/match_1"
-        ).completion
+        "matchCompletions/match_1"
+      )
           .reservationProvider,
         expectedProvider
       );
@@ -876,8 +977,8 @@ test(
 
     const completion =
       env.document(
-        "matches/match_1"
-      ).completion;
+        "matchCompletions/match_1"
+      );
 
     assert.deepEqual(
       completion
@@ -1003,8 +1104,8 @@ test(
 
     assert.deepEqual(
       env.document(
-        "matches/match_1"
-      ).completion
+        "matchCompletions/match_1"
+      )
         .reservationConfirmedUids,
       [
         "owner_1",
@@ -1208,8 +1309,8 @@ test(
 
     assert.deepEqual(
       env.document(
-        "matches/match_1"
-      ).completion
+        "matchCompletions/match_1"
+      )
         .reservationConfirmedUids,
       [
         "owner_1",
@@ -1354,29 +1455,415 @@ test(
       true
     );
 
-    assert.deepEqual(
+    const completion =
       env.document(
-        "matches/match_1"
-      ).completion,
-      {
-        reservationStatus:
-          "awaiting_reservation",
+        "matchCompletions/match_1"
+      );
+
+    assert.equal(
+      completion.matchId,
+      "match_1"
+    );
+
+    assert.equal(
+      completion
+        .reservationStatus,
+      "awaiting_reservation"
+    );
+
+    assert.equal(
+      completion
+        .reservationUrl,
+      null
+    );
+
+    assert.equal(
+      completion
+        .reservationProvider,
+      null
+    );
+
+    assert.equal(
+      completion
+        .reservationSharedAt,
+      null
+    );
+
+    assert.equal(
+      completion
+        .reservationSharedByUid,
+      null
+    );
+
+    assert.deepEqual(
+      completion
+        .reservationConfirmedUids,
+      []
+    );
+
+    assert.equal(
+      typeof completion.updatedAt,
+      "number"
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion exige auth",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    await expectHttpsError(
+      getMatchCompletion({
+        auth: null,
+        data: {
+          matchId:
+            "match_1",
+        },
+      }),
+      "unauthenticated",
+      "AUTH_REQUIRED"
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion retourne le flow vide sans document privé",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    const result =
+      await getMatchCompletion({
+        auth: {
+          uid: "player_2",
+        },
+        data: {
+          matchId:
+            "match_1",
+        },
+      });
+
+    assert.equal(
+      result.ok,
+      true
+    );
+
+    assert.equal(
+      result.completion
+        .reservationStatus,
+      "awaiting_reservation"
+    );
+
+    assert.equal(
+      result.completion
+        .reservationUrl,
+      null
+    );
+
+    assert.deepEqual(
+      result.completion
+        .reservationConfirmedUids,
+      []
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion autorise le créateur",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+
+          "matchCompletions/match_1": {
+            matchId:
+              "match_1",
+
+            reservationStatus:
+              "reserved",
+
+            reservationUrl:
+              "https://4padel.fr/r/abc",
+
+            reservationProvider:
+              "4padel",
+
+            reservationConfirmedUids: [
+              "owner_1",
+            ],
+          },
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    const result =
+      await getMatchCompletion({
+        auth: {
+          uid: "owner_1",
+        },
+        data: {
+          matchId:
+            "match_1",
+        },
+      });
+
+    assert.equal(
+      result.completion
+        .reservationUrl,
+      "https://4padel.fr/r/abc"
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion autorise un vrai participant",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+
+          "matchCompletions/match_1": {
+            matchId:
+              "match_1",
+
+            reservationStatus:
+              "reserved",
+
+            reservationUrl:
+              "https://4padel.fr/r/abc",
+
+            reservationConfirmedUids: [
+              "owner_1",
+            ],
+          },
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    const result =
+      await getMatchCompletion({
+        auth: {
+          uid: "player_2",
+        },
+        data: {
+          matchId:
+            "match_1",
+        },
+      });
+
+    assert.equal(
+      result.completion
+        .reservationStatus,
+      "reserved"
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion refuse un non participant",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+
+          "matchCompletions/match_1": {
+            matchId:
+              "match_1",
+
+            reservationStatus:
+              "reserved",
+
+            reservationUrl:
+              "https://secret.example/reservation",
+
+            reservationConfirmedUids: [
+              "owner_1",
+            ],
+          },
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    await expectHttpsError(
+      getMatchCompletion({
+        auth: {
+          uid: "outsider",
+        },
+        data: {
+          matchId:
+            "match_1",
+        },
+      }),
+      "permission-denied",
+      "NOT_MATCH_PARTICIPANT"
+    );
+  }
+);
+
+
+test(
+  "getMatchCompletion refuse un placeholder ami_de",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch({
+              participants: [
+                "owner_1",
+                "player_2",
+                "player_3",
+                "ami_de_player_3_Lucas",
+              ],
+            }),
+
+          "matchCompletions/match_1": {
+            matchId:
+              "match_1",
+
+            reservationStatus:
+              "reserved",
+
+            reservationUrl:
+              "https://secret.example/reservation",
+          },
+        },
+      });
+
+    const {
+      getMatchCompletion,
+    } =
+      buildCallables(env);
+
+    await expectHttpsError(
+      getMatchCompletion({
+        auth: {
+          uid:
+            "ami_de_player_3_Lucas",
+        },
+        data: {
+          matchId:
+            "match_1",
+        },
+      }),
+      "permission-denied",
+      "NOT_MATCH_PARTICIPANT"
+    );
+  }
+);
+
+
+test(
+  "setMatchReservation ne pollue jamais le document public match",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "matches/match_1":
+            fullMatch(),
+        },
+      });
+
+    const {
+      setMatchReservation,
+    } =
+      buildCallables(env);
+
+    await setMatchReservation({
+      auth: {
+        uid: "owner_1",
+      },
+      data: {
+        matchId:
+          "match_1",
 
         reservationUrl:
-          null,
+          "https://4padel.fr/r/private",
+      },
+    });
 
-        reservationProvider:
-          null,
+    const match =
+      env.document(
+        "matches/match_1"
+      );
 
-        reservationSharedAt:
-          null,
+    const completion =
+      env.document(
+        "matchCompletions/match_1"
+      );
 
-        reservationSharedByUid:
-          null,
+    assert.equal(
+      Object.prototype
+        .hasOwnProperty.call(
+          match,
+          "completion"
+        ),
+      false
+    );
 
-        reservationConfirmedUids:
-          [],
-      }
+    assert.equal(
+      match.updatedAt,
+      undefined
+    );
+
+    assert.equal(
+      completion
+        .reservationUrl,
+      "https://4padel.fr/r/private"
+    );
+
+    assert.equal(
+      env.writes.some(
+        (write) =>
+          write.path
+          === "matches/match_1"
+      ),
+      false
     );
   }
 );
@@ -1462,6 +1949,9 @@ test(
         completion: {
           reservationStatus:
             "reserved",
+
+          reservationUrl:
+            "https://4padel.fr/r/abc",
 
           reservationConfirmedUids: [
             "owner_1",
@@ -1684,23 +2174,23 @@ test(
             "player_3",
             "replacement_4",
           ],
+        },
 
-          completion: {
-            reservationStatus:
-              "reserved",
+        completion: {
+          reservationStatus:
+            "reserved",
 
-            reservationUrl:
-              "https://4padel.fr/r/abc",
+          reservationUrl:
+            "https://4padel.fr/r/abc",
 
-            reservationProvider:
-              "4padel",
+          reservationProvider:
+            "4padel",
 
-            reservationConfirmedUids: [
-              "owner_1",
-              "player_2",
-              "player_3",
-            ],
-          },
+          reservationConfirmedUids: [
+            "owner_1",
+            "player_2",
+            "player_3",
+          ],
         },
       });
 
@@ -1768,14 +2258,14 @@ test(
       match: {
         createurUid:
           "owner_1",
+      },
 
-        completion: {
-          reservationStatus:
-            "reserved",
+      completion: {
+        reservationStatus:
+          "reserved",
 
-          reservationUrl:
-            "https://4padel.fr/r/abc",
-        },
+        reservationUrl:
+          "https://4padel.fr/r/abc",
       },
     });
 

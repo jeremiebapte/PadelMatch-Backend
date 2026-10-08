@@ -111,6 +111,7 @@ import {
 } from "./matchViews.js";
 
 import {
+  buildGetMatchCompletion,
   buildSetMatchReservation,
   buildConfirmMatchReservation,
   buildUnconfirmMatchReservation,
@@ -1711,6 +1712,15 @@ const notifyMatchCompletionAfterJoin =
     tokensOf,
     sendVisibleHybrid,
     logger,
+  });
+
+
+export const getMatchCompletion =
+  buildGetMatchCompletion({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
   });
 
 
@@ -3941,11 +3951,24 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
      *   le lien via le flow MatchDetail.
      */
     try {
+      const completionSnap =
+        await db
+          .collection("matchCompletions")
+          .doc(matchId)
+          .get();
+
+      const completion =
+        completionSnap.exists
+          ? completionSnap.data() || {}
+          : {};
+
       await notifyMatchCompletionAfterJoin({
         matchId,
 
         match:
           participationUpdatedMatch,
+
+        completion,
 
         joinedUid:
           uid,
@@ -4095,6 +4118,10 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
   const matchRef =
     db.collection("matches").doc(matchId);
 
+  const completionRef =
+    db.collection("matchCompletions")
+      .doc(matchId);
+
   let resultClubId = "";
   let resultIsClubMatch = false;
 
@@ -4112,6 +4139,9 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
 
     const freshMatchSnap =
       await tx.get(matchRef);
+
+    const completionSnap =
+      await tx.get(completionRef);
 
     if (!freshMatchSnap.exists) {
       throw new HttpsError(
@@ -4220,30 +4250,19 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         ? capacityRaw
         : MAX_PLAYERS;
 
+    const completionData =
+      completionSnap.exists
+        ? completionSnap.data() || {}
+        : {};
+
     const completionReconciliation =
       reconcileMatchCompletionAfterParticipantsChange({
         completion:
-          matchData.completion,
+          completionData,
 
         participants:
           filtered,
       });
-
-    const updatedCompletion =
-      completionReconciliation.changed
-        ? {
-            ...(
-              matchData.completion
-              && typeof matchData.completion === "object"
-                ? matchData.completion
-                : {}
-            ),
-
-            reservationConfirmedUids:
-              completionReconciliation
-                .reservationConfirmedUids,
-          }
-        : matchData.completion;
 
     participationPreviousMatch = {
       ...matchData,
@@ -4259,15 +4278,6 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         filtered.slice(),
 
       capacity,
-
-      ...(
-        completionReconciliation.changed
-          ? {
-              completion:
-                updatedCompletion,
-            }
-          : {}
-      ),
     };
 
     participationGroupId =
@@ -4295,20 +4305,29 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         FieldValue.serverTimestamp(),
     };
 
-    if (
-      completionReconciliation.changed
-    ) {
-      matchPatch[
-        "completion.reservationConfirmedUids"
-      ] =
-        completionReconciliation
-          .reservationConfirmedUids;
-    }
-
     tx.update(
       matchRef,
       matchPatch
     );
+
+    if (
+      completionReconciliation.changed
+    ) {
+      tx.set(
+        completionRef,
+        {
+          reservationConfirmedUids:
+            completionReconciliation
+              .reservationConfirmedUids,
+
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        }
+      );
+    }
 
     // --------------------------------------------------
     // HISTORIQUE + CRM + EVENT CLUB
@@ -4635,6 +4654,25 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
   };
 
   await matchRef.delete();
+
+  try {
+    await db
+      .collection("matchCompletions")
+      .doc(matchId)
+      .delete();
+  } catch (error) {
+    logger.warn(
+      "deleteMatch completion cleanup ignored failure",
+      {
+        matchId,
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
 
   try {
     await recordMatchUserActivities({

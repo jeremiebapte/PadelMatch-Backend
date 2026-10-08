@@ -564,6 +564,17 @@ service cloud.firestore {
       }
     }
 
+
+    // =========================================================
+    // MATCH COMPLETIONS — données privées
+    //
+    // URL de réservation + confirmations.
+    // Accès exclusivement via Cloud Functions / Admin SDK.
+    // =========================================================
+    match /matchCompletions/{matchId} {
+      allow read, write: if false;
+    }
+
     match /clubReservations/{reservationId} {
       allow get, list: if signedIn()
         && (
