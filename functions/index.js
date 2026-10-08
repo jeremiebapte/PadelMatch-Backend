@@ -106,6 +106,11 @@ import {
 } from "./createMatch.js";
 
 import {
+  buildRecordMatchView,
+  buildGetMatchViewers,
+} from "./matchViews.js";
+
+import {
   buildUpdateMatchDistribution,
 } from "./updateMatchDistribution.js";
 
@@ -1689,6 +1694,24 @@ const notifyGroupMatchSpotAvailable =
     logger,
     frDate,
     frTime,
+  });
+
+
+export const recordMatchView =
+  buildRecordMatchView({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+  });
+
+export const getMatchViewers =
+  buildGetMatchViewers({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
   });
 
 

@@ -549,6 +549,21 @@ service cloud.firestore {
       allow delete: if signedIn() && isOwner();
     }
 
+    // =========================================================
+    // MATCH VIEWS — Match Completion V1
+    //
+    // Données privées et server-authoritative.
+    // Les clients iOS/Android ne lisent ni n'écrivent directement ici.
+    // recordMatchView / getMatchViewers utilisent l'Admin SDK backend.
+    // =========================================================
+    match /matchViews/{matchId} {
+      allow read, write: if false;
+
+      match /users/{userId} {
+        allow read, write: if false;
+      }
+    }
+
     match /clubReservations/{reservationId} {
       allow get, list: if signedIn()
         && (
