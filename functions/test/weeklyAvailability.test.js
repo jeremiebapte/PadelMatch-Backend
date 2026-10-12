@@ -2603,3 +2603,98 @@ test(
     );
   }
 );
+
+
+// ======================================================
+// Weekly Availability V1 — validation des entrées
+// ======================================================
+
+test(
+  "weekKey rejette les dates calendaires inexistantes",
+  () => {
+    for (const weekKey of [
+      "2026-02-30",
+      "2026-13-04",
+      "2026-00-05",
+    ]) {
+      assert.throws(
+        () => normalizeWeekKey(
+          weekKey,
+          FakeHttpsError
+        ),
+        (error) =>
+          error.code === "invalid-argument"
+          && error.message === "INVALID_WEEK_KEY"
+      );
+    }
+  }
+);
+
+
+test(
+  "setWeeklyAvailability rejette un fuseau non autorisé",
+  async () => {
+    const env = createEnvironment();
+    const callables = buildCallables(env);
+
+    await assert.rejects(
+      callables.set(
+        authRequest(
+          "user_a",
+          {
+            weekKey: WEEK,
+            timeZone: "America/New_York",
+            slots: [
+              {
+                weekday: 4,
+                startMinutes: 1200,
+                endMinutes: 1320,
+              },
+            ],
+            sharedGroupIds: [],
+          }
+        )
+      ),
+      (error) =>
+        error.code === "invalid-argument"
+        && error.message === "INVALID_TIMEZONE"
+    );
+
+    assert.equal(env.writes.length, 0);
+  }
+);
+
+
+test(
+  "setWeeklyAvailability refuse plus de 10 groupes",
+  async () => {
+    const env = createEnvironment();
+    const callables = buildCallables(env);
+
+    await assert.rejects(
+      callables.set(
+        authRequest(
+          "user_a",
+          {
+            weekKey: WEEK,
+            timeZone: "Europe/Paris",
+            slots: [
+              {
+                weekday: 4,
+                startMinutes: 1200,
+                endMinutes: 1320,
+              },
+            ],
+            sharedGroupIds: Array.from(
+              { length: 11 },
+              (_, index) => `group_${index + 1}`
+            ),
+          }
+        )
+      ),
+      (error) => error.code === "invalid-argument"
+    );
+
+    assert.equal(env.writes.length, 0);
+  }
+);

@@ -187,6 +187,7 @@ export function normalizeWeekKey(
 
   if (
     Number.isNaN(date.getTime())
+    || date.toISOString().slice(0, 10) !== weekKey
   ) {
     throw new HttpsError(
       "invalid-argument",
@@ -222,7 +223,7 @@ function normalizeTimeZone(
     || "Europe/Paris";
 
   if (
-    timeZone.length > 80
+    timeZone !== "Europe/Paris"
   ) {
     throw new HttpsError(
       "invalid-argument",
