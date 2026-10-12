@@ -125,6 +125,7 @@ import {
   buildGetMyWeeklyAvailability,
   buildClearWeeklyAvailability,
   buildGetWeeklyAvailabilityHome,
+  buildWeeklyAvailabilityReminderCron,
 } from "./weeklyAvailability.js";
 
 import {
@@ -1813,6 +1814,19 @@ export const getWeeklyAvailabilityHome =
     HttpsError,
     runtime: RUNTIME,
     db,
+  });
+
+
+export const weeklyAvailabilityReminderCron =
+  buildWeeklyAvailabilityReminderCron({
+    onSchedule,
+    runtime:
+      RUNTIME_SCHEDULE,
+    db,
+    FieldValue,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
   });
 
 

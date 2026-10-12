@@ -51,6 +51,100 @@ function assertAuthenticated(
 }
 
 
+export function weekKeyForDate(
+  value,
+  timeZone = "Europe/Paris"
+) {
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    throw new TypeError(
+      "INVALID_DATE"
+    );
+  }
+
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        weekday: "short",
+      }
+    );
+
+  const parts =
+    Object.fromEntries(
+      formatter
+        .formatToParts(date)
+        .filter(
+          (part) =>
+            part.type
+              !== "literal"
+        )
+        .map(
+          (part) => [
+            part.type,
+            part.value,
+          ]
+        )
+    );
+
+  const localDate =
+    new Date(
+      `${parts.year}-${parts.month}-${parts.day}T12:00:00.000Z`
+    );
+
+  const weekdayIndex = {
+    Mon: 0,
+    Tue: 1,
+    Wed: 2,
+    Thu: 3,
+    Fri: 4,
+    Sat: 5,
+    Sun: 6,
+  }[parts.weekday];
+
+  if (
+    weekdayIndex === undefined
+  ) {
+    throw new TypeError(
+      "INVALID_WEEKDAY"
+    );
+  }
+
+  localDate.setUTCDate(
+    localDate.getUTCDate()
+      - weekdayIndex
+  );
+
+  const year =
+    localDate.getUTCFullYear();
+
+  const month =
+    String(
+      localDate.getUTCMonth()
+        + 1
+    ).padStart(2, "0");
+
+  const day =
+    String(
+      localDate.getUTCDate()
+    ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+
 export function availabilityDocumentId(
   uid,
   weekKey
@@ -1894,6 +1988,292 @@ export function buildGetWeeklyAvailabilityHome({
           rankHomeOpportunities(
             opportunities
           ),
+      };
+    }
+  );
+}
+
+
+export function buildWeeklyAvailabilityReminderCron({
+  onSchedule,
+  runtime,
+  db,
+  FieldValue,
+  tokensOf,
+  sendVisibleHybrid,
+  logger,
+  nowProvider =
+    () => new Date(),
+}) {
+  if (
+    typeof onSchedule
+      !== "function"
+  ) {
+    throw new TypeError(
+      "ON_SCHEDULE_REQUIRED"
+    );
+  }
+
+  return onSchedule(
+    {
+      ...runtime,
+      schedule:
+        "0 9 * * 1",
+      timeZone:
+        "Europe/Paris",
+    },
+    async () => {
+      const now =
+        nowProvider();
+
+      const weekKey =
+        weekKeyForDate(
+          now,
+          "Europe/Paris"
+        );
+
+      const membershipsSnapshot =
+        await db
+          .collection(
+            COLLECTION_MEMBERSHIPS
+          )
+          .where(
+            "status",
+            "==",
+            ACTIVE
+          )
+          .get();
+
+      const userIds =
+        [
+          ...new Set(
+            membershipsSnapshot.docs
+              .map(
+                (doc) =>
+                  asString(
+                    doc
+                      .data()
+                      ?.userId
+                  )
+              )
+              .filter(
+                (uid) =>
+                  uid
+                  && !uid.startsWith(
+                    "ami_de_"
+                  )
+              )
+          ),
+        ];
+
+      let eligible = 0;
+      let attempted = 0;
+      let sent = 0;
+
+      for (
+        const uid
+        of userIds
+      ) {
+        try {
+          const availabilityRef =
+            db
+              .collection(
+                COLLECTION_AVAILABILITY
+              )
+              .doc(
+                availabilityDocumentId(
+                  uid,
+                  weekKey
+                )
+              );
+
+          const availabilitySnapshot =
+            await availabilityRef
+              .get();
+
+          if (
+            availabilitySnapshot.exists
+          ) {
+            continue;
+          }
+
+          eligible += 1;
+
+          const notificationId =
+            `weekly_reminder__${weekKey}__${uid}`;
+
+          const notificationRef =
+            db
+              .collection(
+                COLLECTION_MATCH_NOTIFICATIONS
+              )
+              .doc(
+                notificationId
+              );
+
+          let claimed = false;
+
+          await db.runTransaction(
+            async (tx) => {
+              const existing =
+                await tx.get(
+                  notificationRef
+                );
+
+              if (
+                existing.exists
+              ) {
+                return;
+              }
+
+              tx.set(
+                notificationRef,
+                {
+                  notificationId,
+
+                  notificationType:
+                    "weekly_reminder",
+
+                  weekKey,
+                  recipientUid:
+                    uid,
+
+                  status:
+                    "claimed",
+
+                  createdAt:
+                    FieldValue
+                      .serverTimestamp(),
+
+                  updatedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                }
+              );
+
+              claimed = true;
+            }
+          );
+
+          if (!claimed) {
+            continue;
+          }
+
+          attempted += 1;
+
+          const tokens =
+            await tokensOf(uid);
+
+          if (
+            !Array.isArray(tokens)
+            || !tokens.length
+          ) {
+            await notificationRef
+              .set(
+                {
+                  status:
+                    "no_tokens",
+
+                  updatedAt:
+                    FieldValue
+                      .serverTimestamp(),
+                },
+                {
+                  merge: true,
+                }
+              );
+
+            continue;
+          }
+
+          await sendVisibleHybrid(
+            tokens,
+            {
+              title:
+                "Ta semaine padel commence ici 🎾",
+
+              body:
+                "Envoie tes dispos pour voir avec qui tu peux jouer cette semaine.",
+
+              data: {
+                type:
+                  "weekly_availability",
+
+                subtype:
+                  "weekly_reminder",
+
+                entityType:
+                  "weekly_availability",
+
+                entityId:
+                  notificationId,
+
+                weekKey,
+
+                destination:
+                  "availability_editor",
+              },
+            }
+          );
+
+          await notificationRef
+            .set(
+              {
+                status:
+                  "sent",
+
+                sentAt:
+                  FieldValue
+                    .serverTimestamp(),
+
+                updatedAt:
+                  FieldValue
+                    .serverTimestamp(),
+              },
+              {
+                merge: true,
+              }
+            );
+
+          sent += 1;
+        } catch (error) {
+          logger?.warn?.(
+            "weekly availability reminder ignored user failure",
+            {
+              uid,
+              weekKey,
+
+              error:
+                String(
+                  error?.message
+                  ?? error
+                ),
+            }
+          );
+        }
+      }
+
+      logger?.info?.(
+        "weekly availability reminder completed",
+        {
+          weekKey,
+          memberships:
+            membershipsSnapshot.size,
+          uniqueUsers:
+            userIds.length,
+          eligible,
+          attempted,
+          sent,
+        }
+      );
+
+      return {
+        weekKey,
+        uniqueUsers:
+          userIds.length,
+        eligible,
+        attempted,
+        sent,
       };
     }
   );

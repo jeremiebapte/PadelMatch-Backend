@@ -10,6 +10,8 @@ import {
   buildGetMyWeeklyAvailability,
   buildClearWeeklyAvailability,
   buildGetWeeklyAvailabilityHome,
+  buildWeeklyAvailabilityReminderCron,
+  weekKeyForDate,
 } from "../weeklyAvailability.js";
 
 
@@ -2122,6 +2124,482 @@ test(
               player.uid !== "user_c"
           )
       )
+    );
+  }
+);
+
+
+function buildReminderCron(
+  env,
+  {
+    now =
+      new Date(
+        "2026-10-12T07:00:00.000Z"
+      ),
+  } = {}
+) {
+  let scheduleOptions = null;
+
+  function onSchedule(
+    options,
+    handler
+  ) {
+    scheduleOptions =
+      options;
+
+    return handler;
+  }
+
+  const cron =
+    buildWeeklyAvailabilityReminderCron({
+      onSchedule,
+
+      runtime:
+        env.runtime,
+
+      db:
+        env.db,
+
+      FieldValue:
+        env.FieldValue,
+
+      tokensOf:
+        env.tokensOf,
+
+      sendVisibleHybrid:
+        env.sendVisibleHybrid,
+
+      logger:
+        env.logger,
+
+      nowProvider:
+        () => now,
+    });
+
+  return {
+    cron,
+
+    get scheduleOptions() {
+      return scheduleOptions;
+    },
+  };
+}
+
+
+test(
+  "weekKeyForDate calcule le lundi de la semaine en heure de Paris",
+  () => {
+    assert.equal(
+      weekKeyForDate(
+        new Date(
+          "2026-10-15T12:00:00.000Z"
+        )
+      ),
+      "2026-10-12"
+    );
+
+    /*
+     * 18 octobre 22h30 UTC =
+     * 19 octobre 00h30 à Paris.
+     * On doit donc basculer sur
+     * la semaine du lundi 19.
+     */
+    assert.equal(
+      weekKeyForDate(
+        new Date(
+          "2026-10-18T22:30:00.000Z"
+        )
+      ),
+      "2026-10-19"
+    );
+  }
+);
+
+
+test(
+  "le cron weekly availability est planifié lundi 9h heure de Paris",
+  () => {
+    const env =
+      createEnvironment();
+
+    const reminder =
+      buildReminderCron(env);
+
+    assert.equal(
+      reminder
+        .scheduleOptions
+        .schedule,
+      "0 9 * * 1"
+    );
+
+    assert.equal(
+      reminder
+        .scheduleOptions
+        .timeZone,
+      "Europe/Paris"
+    );
+  }
+);
+
+
+test(
+  "un membre actif sans disponibilité reçoit un seul rappel hebdomadaire",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "users/user_a": {
+            pseudo:
+              "Jeremie",
+            notificationsEnabled:
+              true,
+          },
+
+          "users/user_a/fcmTokens/token_a": {},
+
+          "groupMemberships/group_1_user_a": {
+            groupId:
+              "group_1",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+        },
+      });
+
+    const reminder =
+      buildReminderCron(env);
+
+    const result =
+      await reminder.cron();
+
+    assert.equal(
+      result.weekKey,
+      WEEK
+    );
+
+    assert.equal(
+      result.uniqueUsers,
+      1
+    );
+
+    assert.equal(
+      result.eligible,
+      1
+    );
+
+    assert.equal(
+      result.attempted,
+      1
+    );
+
+    assert.equal(
+      result.sent,
+      1
+    );
+
+    assert.equal(
+      env.notifications.length,
+      1
+    );
+
+    assert.deepEqual(
+      env.notifications[0]
+        .tokens,
+      [
+        "token_a",
+      ]
+    );
+
+    assert.equal(
+      env.notifications[0]
+        .payload
+        .data
+        .type,
+      "weekly_availability"
+    );
+
+    assert.equal(
+      env.notifications[0]
+        .payload
+        .data
+        .subtype,
+      "weekly_reminder"
+    );
+
+    assert.equal(
+      env.notifications[0]
+        .payload
+        .data
+        .destination,
+      "availability_editor"
+    );
+
+    const record =
+      env.document(
+        `weeklyAvailabilityNotifications/weekly_reminder__${WEEK}__user_a`
+      );
+
+    assert.equal(
+      record.status,
+      "sent"
+    );
+  }
+);
+
+
+test(
+  "plusieurs memberships actifs du même joueur produisent un seul rappel",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "users/user_a": {
+            notificationsEnabled:
+              true,
+          },
+
+          "users/user_a/fcmTokens/token_a": {},
+
+          "groupMemberships/group_1_user_a": {
+            groupId:
+              "group_1",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+
+          "groupMemberships/group_2_user_a": {
+            groupId:
+              "group_2",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+        },
+      });
+
+    const reminder =
+      buildReminderCron(env);
+
+    const result =
+      await reminder.cron();
+
+    assert.equal(
+      result.uniqueUsers,
+      1
+    );
+
+    assert.equal(
+      result.sent,
+      1
+    );
+
+    assert.equal(
+      env.notifications.length,
+      1
+    );
+  }
+);
+
+
+test(
+  "un joueur ayant déjà renseigné ses disponibilités ne reçoit pas le rappel",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "users/user_a": {
+            notificationsEnabled:
+              true,
+          },
+
+          "users/user_a/fcmTokens/token_a": {},
+
+          "groupMemberships/group_1_user_a": {
+            groupId:
+              "group_1",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+
+          [`weeklyAvailabilities/user_a_${WEEK}`]: {
+            uid:
+              "user_a",
+            weekKey:
+              WEEK,
+            slots: [
+              {
+                weekday: 4,
+                startMinutes: 1200,
+                endMinutes: 1320,
+              },
+            ],
+            sharedGroupIds: [
+              "group_1",
+            ],
+          },
+        },
+      });
+
+    const reminder =
+      buildReminderCron(env);
+
+    const result =
+      await reminder.cron();
+
+    assert.equal(
+      result.uniqueUsers,
+      1
+    );
+
+    assert.equal(
+      result.eligible,
+      0
+    );
+
+    assert.equal(
+      result.attempted,
+      0
+    );
+
+    assert.equal(
+      result.sent,
+      0
+    );
+
+    assert.equal(
+      env.notifications.length,
+      0
+    );
+  }
+);
+
+
+test(
+  "rejouer le cron la même semaine ne renvoie jamais le même rappel",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "users/user_a": {
+            notificationsEnabled:
+              true,
+          },
+
+          "users/user_a/fcmTokens/token_a": {},
+
+          "groupMemberships/group_1_user_a": {
+            groupId:
+              "group_1",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+        },
+      });
+
+    const reminder =
+      buildReminderCron(env);
+
+    const first =
+      await reminder.cron();
+
+    assert.equal(
+      first.sent,
+      1
+    );
+
+    assert.equal(
+      env.notifications.length,
+      1
+    );
+
+    const second =
+      await reminder.cron();
+
+    assert.equal(
+      second.attempted,
+      0
+    );
+
+    assert.equal(
+      second.sent,
+      0
+    );
+
+    assert.equal(
+      env.notifications.length,
+      1
+    );
+  }
+);
+
+
+test(
+  "notifications globales désactivées signifie aucun push de rappel",
+  async () => {
+    const env =
+      createEnvironment({
+        initialDocuments: {
+          "users/user_a": {
+            notificationsEnabled:
+              false,
+          },
+
+          "users/user_a/fcmTokens/token_a": {},
+
+          "groupMemberships/group_1_user_a": {
+            groupId:
+              "group_1",
+            userId:
+              "user_a",
+            status:
+              "active",
+          },
+        },
+      });
+
+    const reminder =
+      buildReminderCron(env);
+
+    const result =
+      await reminder.cron();
+
+    assert.equal(
+      result.eligible,
+      1
+    );
+
+    assert.equal(
+      result.attempted,
+      1
+    );
+
+    assert.equal(
+      result.sent,
+      0
+    );
+
+    assert.equal(
+      env.notifications.length,
+      0
+    );
+
+    const record =
+      env.document(
+        `weeklyAvailabilityNotifications/weekly_reminder__${WEEK}__user_a`
+      );
+
+    assert.equal(
+      record.status,
+      "no_tokens"
     );
   }
 );
