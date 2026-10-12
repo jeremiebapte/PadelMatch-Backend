@@ -106,6 +106,21 @@ import {
 } from "./createMatch.js";
 
 import {
+  buildRecordMatchView,
+  buildGetMatchViewers,
+} from "./matchViews.js";
+
+import {
+  buildGetMatchCompletion,
+  buildSetMatchReservation,
+  buildConfirmMatchReservation,
+  buildUnconfirmMatchReservation,
+  buildClearMatchReservation,
+  reconcileMatchCompletionAfterParticipantsChange,
+  buildNotifyMatchCompletionAfterJoin,
+} from "./matchCompletion.js";
+
+import {
   buildUpdateMatchDistribution,
 } from "./updateMatchDistribution.js";
 
@@ -1689,6 +1704,84 @@ const notifyGroupMatchSpotAvailable =
     logger,
     frDate,
     frTime,
+  });
+
+
+const notifyMatchCompletionAfterJoin =
+  buildNotifyMatchCompletionAfterJoin({
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+  });
+
+
+export const getMatchCompletion =
+  buildGetMatchCompletion({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+  });
+
+
+export const setMatchReservation =
+  buildSetMatchReservation({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+  });
+
+export const confirmMatchReservation =
+  buildConfirmMatchReservation({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+  });
+
+export const unconfirmMatchReservation =
+  buildUnconfirmMatchReservation({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+  });
+
+export const clearMatchReservation =
+  buildClearMatchReservation({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+  });
+
+
+export const recordMatchView =
+  buildRecordMatchView({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+  });
+
+export const getMatchViewers =
+  buildGetMatchViewers({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
   });
 
 
@@ -3847,6 +3940,59 @@ export const joinMatch = onCall(RUNTIME, async (req) => {
       );
     }
 
+    /*
+     * Match Completion V1
+     *
+     * - match nouvellement complet sans terrain :
+     *   action demandée au créateur;
+     *
+     * - terrain déjà réservé après remplacement :
+     *   le nouveau joueur reçoit immédiatement
+     *   le lien via le flow MatchDetail.
+     */
+    try {
+      const completionSnap =
+        await db
+          .collection("matchCompletions")
+          .doc(matchId)
+          .get();
+
+      const completion =
+        completionSnap.exists
+          ? completionSnap.data() || {}
+          : {};
+
+      await notifyMatchCompletionAfterJoin({
+        matchId,
+
+        match:
+          participationUpdatedMatch,
+
+        completion,
+
+        joinedUid:
+          uid,
+
+        becameFull:
+          participationBecameFull,
+      });
+    } catch (error) {
+      logger.warn(
+        "joinMatch completion notification ignored failure",
+        {
+          matchId,
+          uid,
+
+          error:
+            String(
+              error?.message
+              ?? error
+            ),
+        }
+      );
+    }
+
+
     if (participationGroupId) {
       try {
         await notifyGroupMatchPlayerJoined({
@@ -3972,6 +4118,10 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
   const matchRef =
     db.collection("matches").doc(matchId);
 
+  const completionRef =
+    db.collection("matchCompletions")
+      .doc(matchId);
+
   let resultClubId = "";
   let resultIsClubMatch = false;
 
@@ -3989,6 +4139,9 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
 
     const freshMatchSnap =
       await tx.get(matchRef);
+
+    const completionSnap =
+      await tx.get(completionRef);
 
     if (!freshMatchSnap.exists) {
       throw new HttpsError(
@@ -4097,6 +4250,20 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
         ? capacityRaw
         : MAX_PLAYERS;
 
+    const completionData =
+      completionSnap.exists
+        ? completionSnap.data() || {}
+        : {};
+
+    const completionReconciliation =
+      reconcileMatchCompletionAfterParticipantsChange({
+        completion:
+          completionData,
+
+        participants:
+          filtered,
+      });
+
     participationPreviousMatch = {
       ...matchData,
       participants:
@@ -4106,8 +4273,10 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
 
     participationUpdatedMatch = {
       ...matchData,
+
       participants:
         filtered.slice(),
+
       capacity,
     };
 
@@ -4128,11 +4297,37 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
     // ÉCRITURE OPÉRATIONNELLE
     // --------------------------------------------------
 
-    tx.update(matchRef, {
-      participants: filtered,
+    const matchPatch = {
+      participants:
+        filtered,
+
       updatedAt:
         FieldValue.serverTimestamp(),
-    });
+    };
+
+    tx.update(
+      matchRef,
+      matchPatch
+    );
+
+    if (
+      completionReconciliation.changed
+    ) {
+      tx.set(
+        completionRef,
+        {
+          reservationConfirmedUids:
+            completionReconciliation
+              .reservationConfirmedUids,
+
+          updatedAt:
+            FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        }
+      );
+    }
 
     // --------------------------------------------------
     // HISTORIQUE + CRM + EVENT CLUB
@@ -4459,6 +4654,25 @@ export const deleteMatch = onCall(RUNTIME, async (req) => {
   };
 
   await matchRef.delete();
+
+  try {
+    await db
+      .collection("matchCompletions")
+      .doc(matchId)
+      .delete();
+  } catch (error) {
+    logger.warn(
+      "deleteMatch completion cleanup ignored failure",
+      {
+        matchId,
+        error:
+          String(
+            error?.message
+            ?? error
+          ),
+      }
+    );
+  }
 
   try {
     await recordMatchUserActivities({
