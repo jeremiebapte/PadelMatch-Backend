@@ -575,6 +575,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+
+    // =========================================================
+    // WEEKLY AVAILABILITY — données privées
+    //
+    // Disponibilités personnelles + diffusion vers groupes.
+    // Accès exclusivement via Cloud Functions / Admin SDK.
+    // =========================================================
+    match /weeklyAvailabilities/{availabilityId} {
+      allow read, write: if false;
+    }
+
+    match /weeklyAvailabilityShares/{shareId} {
+      allow read, write: if false;
+    }
+
+
+    match /weeklyAvailabilityNotifications/{notificationId} {
+      allow read, write: if false;
+    }
+
     match /clubReservations/{reservationId} {
       allow get, list: if signedIn()
         && (

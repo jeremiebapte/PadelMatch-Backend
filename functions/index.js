@@ -121,6 +121,14 @@ import {
 } from "./matchCompletion.js";
 
 import {
+  buildSetWeeklyAvailability,
+  buildGetMyWeeklyAvailability,
+  buildClearWeeklyAvailability,
+  buildGetWeeklyAvailabilityHome,
+  buildWeeklyAvailabilityReminderCron,
+} from "./weeklyAvailability.js";
+
+import {
   buildUpdateMatchDistribution,
 } from "./updateMatchDistribution.js";
 
@@ -1764,6 +1772,61 @@ export const clearMatchReservation =
     runtime: RUNTIME,
     db,
     FieldValue,
+  });
+
+
+
+export const setWeeklyAvailability =
+  buildSetWeeklyAvailability({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+    FieldValue,
+    getEligibleGroupRecipients,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
+  });
+
+
+export const getMyWeeklyAvailability =
+  buildGetMyWeeklyAvailability({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+  });
+
+
+export const clearWeeklyAvailability =
+  buildClearWeeklyAvailability({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+  });
+
+
+export const getWeeklyAvailabilityHome =
+  buildGetWeeklyAvailabilityHome({
+    onCall,
+    HttpsError,
+    runtime: RUNTIME,
+    db,
+  });
+
+
+export const weeklyAvailabilityReminderCron =
+  buildWeeklyAvailabilityReminderCron({
+    onSchedule,
+    runtime:
+      RUNTIME_SCHEDULE,
+    db,
+    FieldValue,
+    tokensOf,
+    sendVisibleHybrid,
+    logger,
   });
 
 
