@@ -123,6 +123,7 @@ export function buildCreateGroupJoinRequest({
   logger,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
 }) {
   if (typeof onCall !== "function") {
     throw new TypeError(
@@ -471,6 +472,22 @@ export function buildCreateGroupJoinRequest({
           await Promise.allSettled(
             result.managerUids.map(
               async (managerUid) => {
+                const pushAllowed =
+                  typeof isPushAllowed !== "function"
+                  || await isPushAllowed({
+                    uid: managerUid,
+                    category: "groups",
+                    event: "groupJoinRequest",
+                  });
+
+                if (!pushAllowed) {
+                  return {
+                    managerUid,
+                    tokenCount: 0,
+                    skippedByPreference: true,
+                  };
+                }
+
                 const tokens =
                   await tokensOf(
                     managerUid

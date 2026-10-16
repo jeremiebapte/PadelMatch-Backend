@@ -928,6 +928,7 @@ async function notifyNewAvailabilityMatches({
   getEligibleGroupRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
 }) {
   if (
@@ -1086,6 +1087,17 @@ async function notifyNewAvailabilityMatches({
           const recipientUid
           of relevantUids
         ) {
+          if (
+            typeof isPushAllowed === "function"
+            && !(await isPushAllowed({
+              uid: recipientUid,
+              category: "availability",
+              event: "availabilityOverlap",
+            }))
+          ) {
+            continue;
+          }
+
           const notificationId =
             availabilityMatchNotificationId({
               weekKey,
@@ -1458,6 +1470,7 @@ export function buildSetWeeklyAvailability({
   getEligibleGroupRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
 }) {
   return onCall(
@@ -1654,6 +1667,7 @@ export function buildSetWeeklyAvailability({
           getEligibleGroupRecipients,
           tokensOf,
           sendVisibleHybrid,
+          isPushAllowed,
           logger,
         });
 
@@ -2002,6 +2016,7 @@ export function buildWeeklyAvailabilityReminderCron({
   FieldValue,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   nowProvider =
     () => new Date(),
@@ -2099,6 +2114,17 @@ export function buildWeeklyAvailabilityReminderCron({
           }
 
           eligible += 1;
+
+          if (
+            typeof isPushAllowed === "function"
+            && !(await isPushAllowed({
+              uid,
+              category: "availability",
+              event: "availabilityReminder",
+            }))
+          ) {
+            continue;
+          }
 
           const notificationId =
             `weekly_reminder__${weekKey}__${uid}`;

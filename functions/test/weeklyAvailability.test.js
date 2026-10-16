@@ -516,6 +516,9 @@ function buildCallables(env) {
         sendVisibleHybrid:
           env.sendVisibleHybrid,
 
+        isPushAllowed:
+          env.isPushAllowed,
+
         logger:
           env.logger,
       }),
@@ -2169,6 +2172,9 @@ function buildReminderCron(
       sendVisibleHybrid:
         env.sendVisibleHybrid,
 
+      isPushAllowed:
+        env.isPushAllowed,
+
       logger:
         env.logger,
 
@@ -2698,3 +2704,176 @@ test(
     assert.equal(env.writes.length, 0);
   }
 );
+
+
+// ==========================================================
+// NOTIFICATIONS V2 — TESTS ANTI-DOUBLONS
+// ==========================================================
+
+function createV2OverlapEnvironment() {
+  const initialDocuments = {};
+
+  for (const [uid, pseudo] of [
+    ["user_a", "Jeremie"],
+    ["user_b", "Mehdi"],
+    ["user_c", "Karim"],
+  ]) {
+    initialDocuments[`users/${uid}`] = {
+      pseudo,
+      notificationsEnabled: true,
+    };
+
+    initialDocuments[`users/${uid}/fcmTokens/token_${uid}`] = {};
+
+    initialDocuments[`groupMemberships/group_1_${uid}`] = {
+      groupId: "group_1",
+      userId: uid,
+      status: "active",
+      notificationsEnabled: true,
+    };
+  }
+
+  initialDocuments["groups/group_1"] = {
+    name: "Potes Padel",
+  };
+
+  for (const uid of ["user_b", "user_c"]) {
+    initialDocuments[
+      `weeklyAvailabilityShares/${WEEK}_group_1_${uid}`
+    ] = {
+      uid,
+      groupId: "group_1",
+      weekKey: WEEK,
+      pseudoSnapshot: uid,
+      slots: [
+        {
+          weekday: 4,
+          startMinutes: 1200,
+          endMinutes: 1320,
+        },
+      ],
+    };
+  }
+
+  return createEnvironment({ initialDocuments });
+}
+
+test("V2 : préférence Ça matche désactivée avant anti-doublon", async () => {
+  const env = createV2OverlapEnvironment();
+  const decisions = [];
+
+  env.isPushAllowed = async ({ uid, category, event }) => {
+    decisions.push({ uid, category, event });
+    return uid !== "user_b";
+  };
+
+  const result = await buildCallables(env).set(
+    authRequest("user_a", {
+      weekKey: WEEK,
+      slots: [
+        {
+          weekday: 4,
+          startMinutes: 1200,
+          endMinutes: 1320,
+        },
+      ],
+      sharedGroupIds: ["group_1"],
+    })
+  );
+
+  assert.ok(decisions.length >= 3);
+
+  assert.ok(decisions.every(
+    (item) =>
+      item.category === "availability"
+      && item.event === "availabilityOverlap"
+  ));
+
+  assert.equal(
+    decisions.some((item) => item.uid === "user_b"),
+    true
+  );
+
+  assert.equal(result.matchNotifications.sent, 2);
+  assert.equal(env.notifications.length, 2);
+
+  assert.equal(
+    env.tokenRequests.includes("user_b"),
+    false,
+    "Aucun token ne doit être demandé pour le joueur bloqué"
+  );
+
+  const records = [...env.store.keys()].filter(
+    (path) => path.startsWith("weeklyAvailabilityNotifications/")
+  );
+
+  assert.equal(records.length, 2);
+
+  assert.ok(
+    [...env.store.entries()]
+      .filter(([path]) =>
+        path.startsWith("weeklyAvailabilityNotifications/")
+      )
+      .every(([, data]) => data.recipientUid !== "user_b"),
+    "Le joueur bloqué ne doit avoir aucun identifiant anti-doublon"
+  );
+});
+
+test("V2 : un rappel bloqué ne réserve pas son identifiant", async () => {
+  const env = createEnvironment({
+    initialDocuments: {
+      "users/user_a": {
+        pseudo: "Jeremie",
+        notificationsEnabled: true,
+      },
+      "users/user_a/fcmTokens/token_a": {},
+      "groupMemberships/group_1_user_a": {
+        groupId: "group_1",
+        userId: "user_a",
+        status: "active",
+      },
+    },
+  });
+
+  let allowed = false;
+  const decisions = [];
+
+  env.isPushAllowed = async (request) => {
+    decisions.push(request);
+    return allowed;
+  };
+
+  const reminder = buildReminderCron(env);
+
+  const first = await reminder.cron();
+
+  assert.equal(first.sent, 0);
+  assert.equal(env.notifications.length, 0);
+  assert.equal(env.tokenRequests.length, 0);
+
+  const path =
+    `weeklyAvailabilityNotifications/weekly_reminder__${WEEK}__user_a`;
+
+  assert.equal(env.document(path), undefined);
+
+  assert.deepEqual(decisions[0], {
+    uid: "user_a",
+    category: "availability",
+    event: "availabilityReminder",
+  });
+
+  // Le même rappel devient possible après réactivation.
+  allowed = true;
+
+  const second = await reminder.cron();
+
+  assert.equal(second.sent, 1);
+  assert.equal(env.notifications.length, 1);
+  assert.equal(env.document(path).status, "sent");
+
+  // Après envoi réel, le mécanisme anti-doublon reprend.
+  const third = await reminder.cron();
+
+  assert.equal(third.sent, 0);
+  assert.equal(env.notifications.length, 1);
+});

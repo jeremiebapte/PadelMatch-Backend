@@ -39,8 +39,12 @@ function querySnapshot(
 
 function createEnvironment({
   failTransaction = false,
+  isPushAllowed,
 } = {}) {
   const writes = [];
+  const tokenRequests = [];
+  const sends = [];
+  const preferenceChecks = [];
   const references =
     new Map();
 
@@ -319,11 +323,21 @@ function createEnvironment({
     return handler;
   }
 
-  async function tokensOf() {
-    return [];
+  async function tokensOf(uid) {
+    tokenRequests.push(uid);
+    return [`token_${uid}`];
   }
 
-  async function sendVisibleHybrid() {}
+  async function sendVisibleHybrid(tokens, payload) {
+    sends.push({ tokens, payload });
+  }
+
+  const checkPush = typeof isPushAllowed === "function"
+    ? async (input) => {
+        preferenceChecks.push(input);
+        return isPushAllowed(input);
+      }
+    : undefined;
 
   const logger = {
     info() {},
@@ -344,11 +358,15 @@ function createEnvironment({
       logger,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed: checkPush,
     });
 
   return {
     callable,
     writes,
+    tokenRequests,
+    sends,
+    preferenceChecks,
   };
 }
 
@@ -542,3 +560,81 @@ test(
     );
   }
 );
+
+const INVITE_REQUEST = {
+  auth: { uid: "owner_123" },
+  data: {
+    groupId: "group_123",
+    targetUserId: "target_123",
+    source: "internal_search",
+  },
+};
+
+test("V2 : invitation autorisée déclenche le push", async () => {
+  const env = createEnvironment({
+    isPushAllowed: async () => true,
+  });
+
+  const result = await env.callable(INVITE_REQUEST);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(env.preferenceChecks, [{
+    uid: "target_123",
+    category: "groups",
+    event: "groupInvitation",
+  }]);
+  assert.deepEqual(env.tokenRequests, ["target_123"]);
+  assert.equal(env.sends.length, 1);
+  assert.equal(env.sends[0].payload.data.subtype, "invite");
+});
+
+test("V2 : invitation désactivée ne récupère aucun token", async () => {
+  const env = createEnvironment({
+    isPushAllowed: async () => false,
+  });
+
+  const result = await env.callable(INVITE_REQUEST);
+
+  assert.equal(result.ok, true);
+  assert.equal(env.preferenceChecks.length, 1);
+  assert.deepEqual(env.tokenRequests, []);
+  assert.deepEqual(env.sends, []);
+  assert.ok(env.writes.some(
+    write => write.path.startsWith("groupInvites/")
+  ));
+  assert.ok(env.writes.some(
+    write => write.path.startsWith("userActivities/")
+  ));
+});
+
+test("V2 : erreur des préférences ne supprime pas l'invitation", async () => {
+  const env = createEnvironment({
+    isPushAllowed: async () => {
+      throw new Error("FIRESTORE_UNAVAILABLE");
+    },
+  });
+
+  const result = await env.callable(INVITE_REQUEST);
+
+  assert.equal(result.ok, true);
+  assert.equal(env.preferenceChecks.length, 1);
+  assert.deepEqual(env.tokenRequests, []);
+  assert.deepEqual(env.sends, []);
+  assert.ok(env.writes.some(
+    write => write.path.startsWith("groupInvites/")
+  ));
+  assert.ok(env.writes.some(
+    write => write.path.startsWith("userActivities/")
+  ));
+});
+
+test("V2 : sans filtre injecté, ancien envoi conservé", async () => {
+  const env = createEnvironment();
+
+  const result = await env.callable(INVITE_REQUEST);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(env.preferenceChecks, []);
+  assert.deepEqual(env.tokenRequests, ["target_123"]);
+  assert.equal(env.sends.length, 1);
+});

@@ -103,6 +103,7 @@ function contentFor(type, match = {}) {
 export function buildNotifyClassicMatchEvent({
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
 }) {
   if (typeof tokensOf !== "function") {
@@ -148,6 +149,23 @@ export function buildNotifyClassicMatchEvent({
 
     for (const recipientUid of recipients) {
       try {
+        if (typeof isPushAllowed === "function") {
+          const event =
+            type === "match_updated"
+              ? "matchUpdated"
+              : "matchCancelled";
+
+          const allowed = await isPushAllowed({
+            uid: recipientUid,
+            category: "matches",
+            event,
+          });
+
+          if (!allowed) {
+            continue;
+          }
+        }
+
         const tokens =
           await tokensOf(recipientUid);
 

@@ -156,6 +156,7 @@ export function buildCreateGroupInvite({
   logger,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
 }) {
   if (typeof onCall !== "function") {
     throw new TypeError(
@@ -583,12 +584,23 @@ export function buildCreateGroupInvite({
           );
 
         try {
-          const tokens =
-            await tokensOf(
-              result.targetUserId
-            );
+          const pushAllowed =
+            typeof isPushAllowed !== "function"
+            || await isPushAllowed({
+              uid: result.targetUserId,
+              category: "groups",
+              event: "groupInvitation",
+            });
 
-          await sendVisibleHybrid(
+          const tokens =
+            pushAllowed
+              ? await tokensOf(
+                  result.targetUserId
+                )
+              : [];
+
+          if (pushAllowed) {
+            await sendVisibleHybrid(
             tokens,
             {
               title:
@@ -609,6 +621,7 @@ export function buildCreateGroupInvite({
               },
             }
           );
+          }
 
           logger?.info?.(
             "createGroupInvite notification processed",

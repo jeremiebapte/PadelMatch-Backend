@@ -565,6 +565,7 @@ export function buildFlushGroupChatNotifications({
   FieldValue,
   tokensOf,
   sendChatHybrid,
+  isPushAllowed,
   logger,
 }) {
   validateFlushDependencies({
@@ -858,6 +859,18 @@ export function buildFlushGroupChatNotifications({
            * La transaction finale supprimera cet agrégat,
            * sans appeler FCM.
            */
+          delivered = true;
+        } else if (
+          typeof isPushAllowed === "function"
+          && !(await isPushAllowed({
+            uid: recipientUid,
+            category: "messages",
+            event: "groupMessage",
+            membership,
+          }))
+        ) {
+          // Préférence désactivée :
+          // supprimer l'agrégat sans envoyer de push.
           delivered = true;
         } else {
           const tokens =

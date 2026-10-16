@@ -114,6 +114,7 @@ function validateNotificationDependencies({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   frDate,
   frTime,
 }) {
@@ -167,11 +168,13 @@ function validateNotificationDependencies({
 function buildSendGroupMatchNotification({
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
 }) {
   return async function sendGroupMatchNotification({
     groupId,
     recipients,
+    notificationPreferenceEvent,
     title,
     body,
     data,
@@ -222,6 +225,21 @@ function buildSendGroupMatchNotification({
       }
 
       try {
+        if (typeof isPushAllowed === "function") {
+          const [category, event] =
+            notificationPreferenceEvent;
+
+          const allowed = await isPushAllowed({
+            uid: recipientUid,
+            category,
+            event,
+          });
+
+          if (!allowed) {
+            continue;
+          }
+        }
+
         const tokens =
           await tokensOf(
             recipientUid
@@ -296,6 +314,7 @@ export function buildNotifyGroupMatchEvent({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -305,6 +324,7 @@ export function buildNotifyGroupMatchEvent({
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed,
     frDate,
     frTime,
   });
@@ -319,6 +339,7 @@ export function buildNotifyGroupMatchEvent({
     buildSendGroupMatchNotification({
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
     });
 
@@ -446,12 +467,31 @@ export function buildNotifyGroupMatchEvent({
             excludedUserIds,
           });
 
+
+    const notificationPreferenceEvent = {
+      [GroupMatchNotificationEvent.CREATED]:
+        ["groups", "groupMatchCreated"],
+      [GroupMatchNotificationEvent.UPDATED]:
+        ["matches", "groupMatchUpdated"],
+      [GroupMatchNotificationEvent.CANCELLED]:
+        ["matches", "groupMatchCancelled"],
+      [GroupMatchNotificationEvent.PLAYER_JOINED]:
+        ["matches", "groupMatchPlayerJoined"],
+      [GroupMatchNotificationEvent.PLAYER_LEFT]:
+        ["matches", "groupMatchPlayerLeft"],
+      [GroupMatchNotificationEvent.MATCH_FULL]:
+        ["matches", "groupMatchFull"],
+      [GroupMatchNotificationEvent.SPOT_AVAILABLE]:
+        ["matches", "groupMatchSpotAvailable"],
+    }[event];
+
     const result =
       await sendNotification({
         groupId:
           normalizedGroupId,
 
         recipients,
+        notificationPreferenceEvent,
 
         title:
           content.title,
@@ -504,6 +544,7 @@ function buildLegacyEventNotifier({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -514,6 +555,7 @@ function buildLegacyEventNotifier({
       getEligibleMatchRecipients,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
       frDate,
       frTime,
@@ -528,6 +570,7 @@ export function buildNotifyGroupMatchCreated({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -542,6 +585,7 @@ export function buildNotifyGroupMatchCreated({
       getEligibleMatchRecipients,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
       frDate,
       frTime,
@@ -581,6 +625,7 @@ export function buildNotifyGroupMatchUpdated({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -595,6 +640,7 @@ export function buildNotifyGroupMatchUpdated({
       getEligibleMatchRecipients,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
       frDate,
       frTime,
@@ -633,6 +679,7 @@ function buildNotifyGroupMatchParticipationEvent({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -644,6 +691,7 @@ function buildNotifyGroupMatchParticipationEvent({
       getEligibleMatchRecipients,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
       frDate,
       frTime,
@@ -675,6 +723,7 @@ export function buildNotifyGroupMatchPlayerJoined({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -688,6 +737,7 @@ export function buildNotifyGroupMatchPlayerJoined({
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed,
     logger,
     frDate,
     frTime,
@@ -700,6 +750,7 @@ export function buildNotifyGroupMatchPlayerLeft({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -713,6 +764,7 @@ export function buildNotifyGroupMatchPlayerLeft({
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed,
     logger,
     frDate,
     frTime,
@@ -725,6 +777,7 @@ export function buildNotifyGroupMatchFull({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -738,6 +791,7 @@ export function buildNotifyGroupMatchFull({
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed,
     logger,
     frDate,
     frTime,
@@ -750,6 +804,7 @@ export function buildNotifyGroupMatchSpotAvailable({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -763,6 +818,7 @@ export function buildNotifyGroupMatchSpotAvailable({
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed,
     logger,
     frDate,
     frTime,
@@ -775,6 +831,7 @@ export function buildNotifyGroupMatchCancelled({
   getEligibleMatchRecipients,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
   logger,
   frDate,
   frTime,
@@ -789,6 +846,7 @@ export function buildNotifyGroupMatchCancelled({
       getEligibleMatchRecipients,
       tokensOf,
       sendVisibleHybrid,
+      isPushAllowed,
       logger,
       frDate,
       frTime,

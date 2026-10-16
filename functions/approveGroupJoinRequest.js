@@ -173,6 +173,7 @@ export function buildApproveGroupJoinRequest({
   logger,
   tokensOf,
   sendVisibleHybrid,
+  isPushAllowed,
 }) {
   if (typeof onCall !== "function") {
     throw new TypeError(
@@ -605,6 +606,15 @@ export function buildApproveGroupJoinRequest({
           );
 
         try {
+          const pushAllowed =
+            typeof isPushAllowed !== "function"
+            || await isPushAllowed({
+              uid: result.requesterUid,
+              category: "groups",
+              event: "groupMembershipUpdate",
+            });
+
+          if (pushAllowed) {
           const tokens =
             await tokensOf(
               result.requesterUid
@@ -644,6 +654,7 @@ export function buildApproveGroupJoinRequest({
                 tokens.length,
             }
           );
+          }
         } catch (notificationError) {
           logger?.warn?.(
             "approveGroupJoinRequest notification ignored failure",

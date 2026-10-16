@@ -1,3 +1,14 @@
+import {
+  buildMatchReminderDeliveryStoreV2,
+} from "./domain/notifications/MatchReminderDeliveryStoreV2.js";
+
+import {
+  buildMatchReminderSenderV2,
+} from "./domain/notifications/MatchReminderSenderV2.js";
+import {
+  buildMatchReminderConfirmationV2,
+} from "./domain/notifications/MatchReminderConfirmationV2.js";
+
 // Path: functions/index.js
 // ======================================================
 // Padima – Cloud Functions (Node 22, Admin SDK 12) – Gen2
@@ -12,6 +23,15 @@
 // - pushNearbyMatchTrigger : NOUVEAU trigger onCreate(matches/*)
 // - notifyOneHourBeforeMatchCron / notify24HoursBeforeMatchCron : NOUVEAUX crons
 // ======================================================
+
+import {
+  buildGetNotificationPreferencesV2,
+  buildSetNotificationPreferencesV2,
+} from "./notificationPreferencesCallablesV2.js";
+
+import {
+  buildNotificationPushGateV2,
+} from "./domain/notifications/NotificationPushGateV2.js";
 
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -283,10 +303,28 @@ const recordMatchUserActivities =
     logger,
   });
 
+const isNotificationPushAllowedV2 =
+  buildNotificationPushGateV2({ db });
+
+const matchReminderSenderV2 =
+  buildMatchReminderSenderV2({
+    messaging,
+    logger,
+    cleanupInvalidTokensFromResponse,
+  });
+
+const matchReminderConfirmationV2 =
+  buildMatchReminderConfirmationV2({
+    deliveryStore: matchReminderDeliveryStoreV2,
+    logger,
+  });
+
+
 const notifyClassicMatchEvent =
   buildNotifyClassicMatchEvent({
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
   });
 
@@ -1515,16 +1553,39 @@ async function pushNearbyForMatchId(matchId) {
   const heure = frTime(dateHeure);
 
   for (const uid of recipientUids) {
-    const tokens = await tokensOf(uid);
-    if (!tokens.length) continue;
+    try {
+      // Préférences Notifications V2 :
+      // vérifier avant toute récupération de token FCM.
+      const pushAllowed =
+        await isNotificationPushAllowedV2({
+          uid,
+          category: "discovery",
+          event: "nearbyMatch",
+        });
 
-    const copy = copyFor("match", "new", { lieu, heure });
+      if (!pushAllowed) {
+        continue;
+      }
 
-    await send(tokens, {
-      title: copy.title,
-      body: copy.body,
-      data: { type: "match", subtype: "new", matchId },
-    });
+      const tokens = await tokensOf(uid);
+      if (!tokens.length) continue;
+
+      const copy = copyFor("match", "new", { lieu, heure });
+
+      await send(tokens, {
+        title: copy.title,
+        body: copy.body,
+        data: { type: "match", subtype: "new", matchId },
+      });
+    } catch (error) {
+      // Un échec concernant un joueur ne bloque
+      // pas les notifications des autres joueurs.
+      logger.warn("pushNearbyForMatchId recipient failed", {
+        matchId,
+        uid,
+        error: String(error?.message ?? error),
+      });
+    }
   }
 }
 
@@ -1627,6 +1688,7 @@ const flushGroupChatNotifications =
     FieldValue,
     tokensOf,
     sendChatHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
   });
 
@@ -1637,6 +1699,7 @@ const notifyGroupMatchCreated =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1649,6 +1712,7 @@ const notifyGroupMatchUpdated =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1661,6 +1725,7 @@ const notifyGroupMatchCancelled =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1673,6 +1738,7 @@ const notifyGroupMatchPlayerJoined =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1685,6 +1751,7 @@ const notifyGroupMatchPlayerLeft =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1697,6 +1764,7 @@ const notifyGroupMatchFull =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1709,6 +1777,7 @@ const notifyGroupMatchSpotAvailable =
     getEligibleMatchRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
     frDate,
     frTime,
@@ -1786,6 +1855,7 @@ export const setWeeklyAvailability =
     getEligibleGroupRecipients,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
   });
 
@@ -1826,6 +1896,7 @@ export const weeklyAvailabilityReminderCron =
     FieldValue,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
     logger,
   });
 
@@ -5530,25 +5601,44 @@ export const onMatchParticipantsChange = onDocumentUpdated(
       const urgentRecipientUids = await findEligibleRecipients(m, { maxHoursAhead: 12 });
 
       for (const uid of urgentRecipientUids) {
-        const tokens = await tokensOf(uid);
-        if (!tokens.length) continue;
+        try {
+          const pushAllowed =
+            await isNotificationPushAllowedV2({
+              uid,
+              category: "discovery",
+              event: "matchAlmostFull",
+            });
 
-        const copy = copyFor("match", "urgent_plus_one", {
-          lieu,
-          heure: toMillis(m.dateHeure) ? frTime(toMillis(m.dateHeure)) : "",
-        });
+          if (!pushAllowed) {
+            continue;
+          }
 
-        ops.push(
-          send(tokens, {
-            title: copy.title,
-            body: copy.body,
-            data: {
-              type: "nearby_match_urgent",
-              urgency: "plus_one",
-              matchId,
-            },
-          })
-        );
+          const tokens = await tokensOf(uid);
+          if (!tokens.length) continue;
+
+          const copy = copyFor("match", "urgent_plus_one", {
+            lieu,
+            heure: toMillis(m.dateHeure) ? frTime(toMillis(m.dateHeure)) : "",
+          });
+
+          ops.push(
+            send(tokens, {
+              title: copy.title,
+              body: copy.body,
+              data: {
+                type: "nearby_match_urgent",
+                urgency: "plus_one",
+                matchId,
+              },
+            })
+          );
+        } catch (error) {
+          logger.warn("matchAlmostFull recipient failed", {
+            matchId,
+            uid,
+            error: String(error?.message ?? error),
+          });
+        }
       }
     }
 
@@ -5560,6 +5650,12 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 // ======================================================
 // CRON — REMINDERS (1h)
 // ======================================================
+const matchReminderDeliveryStoreV2 =
+  buildMatchReminderDeliveryStoreV2({
+    db,
+    FieldValue,
+  });
+
 export const notifyOneHourBeforeMatchCron = onSchedule(
   { ...RUNTIME_SCHEDULE, schedule: "every 5 minutes", timeZone: "Europe/Paris" },
   async () => {
@@ -5592,21 +5688,75 @@ export const notifyOneHourBeforeMatchCron = onSchedule(
       });
 
       for (const uid of players) {
-        const tokens = await tokensOf(uid);
-        logger.info("cron H-1 user", { matchId, uid, tokensCount: tokens.length });
+        try {
+          const pushAllowed =
+            await isNotificationPushAllowedV2({
+              uid,
+              category: "matches",
+              event: "matchReminder",
+            });
 
-        if (!tokens.length) continue;
+          if (!pushAllowed) {
+            continue;
+          }
 
-        const copy = copyFor("match", "reminder_1h", {
-          lieu,
-          heure: frTime(dateHeure),
-        });
+          const tokens = await tokensOf(uid);
+          logger.info("cron H-1 user", {
+            matchId,
+            uid,
+            tokensCount: tokens.length,
+          });
 
-        await send(tokens, {
-          title: copy.title,
-          body: copy.body,
-          data: { type: "match", subtype: "reminder_1h", matchId },
-        });
+          if (!tokens.length) continue;
+
+          const copy = copyFor("match", "reminder_1h", {
+            lieu,
+            heure: frTime(dateHeure),
+          });
+
+          const delivery =
+            await matchReminderDeliveryStoreV2.claim({
+              matchId,
+              uid,
+              reminderType: "1h",
+              dateHeure,
+            });
+
+          if (!delivery.acquired) {
+            continue;
+          }
+
+          try {
+            await matchReminderSenderV2.sendReminder(tokens, {
+              title: copy.title,
+              body: copy.body,
+              data: { type: "match", subtype: "reminder_1h", matchId },
+            });
+          } catch (sendError) {
+            await matchReminderDeliveryStoreV2.release({
+              ...delivery,
+              error: sendError,
+            });
+            throw sendError;
+          }
+
+          const confirmed =
+            await matchReminderConfirmationV2.confirm(delivery);
+
+          if (!confirmed) {
+            logger.warn("cron H-1 delivery confirmation lost", {
+              matchId,
+              uid,
+              deliveryId: delivery.id,
+            });
+          }
+        } catch (error) {
+          logger.warn("cron H-1 recipient failed", {
+            matchId,
+            uid,
+            error: String(error?.message ?? error),
+          });
+        }
       }
     }
   }
@@ -5643,14 +5793,64 @@ export const notify24HoursBeforeMatchCron = onSchedule(
       });
 
       for (const uid of players) {
-        const tokens = await tokensOf(uid);
-        if (!tokens.length) continue;
+        try {
+          const pushAllowed =
+            await isNotificationPushAllowedV2({
+              uid,
+              category: "matches",
+              event: "matchReminder",
+            });
 
-        await send(tokens, {
-          title: copy.title,
-          body: copy.body,
-          data: { type: "match", subtype: "reminder_24h", matchId },
-        });
+          if (!pushAllowed) {
+            continue;
+          }
+
+          const tokens = await tokensOf(uid);
+          if (!tokens.length) continue;
+
+          const delivery =
+            await matchReminderDeliveryStoreV2.claim({
+              matchId,
+              uid,
+              reminderType: "24h",
+              dateHeure: m.dateHeure,
+            });
+
+          if (!delivery.acquired) {
+            continue;
+          }
+
+          try {
+            await matchReminderSenderV2.sendReminder(tokens, {
+              title: copy.title,
+              body: copy.body,
+              data: { type: "match", subtype: "reminder_24h", matchId },
+            });
+          } catch (sendError) {
+            await matchReminderDeliveryStoreV2.release({
+              ...delivery,
+              error: sendError,
+            });
+            throw sendError;
+          }
+
+          const confirmed =
+            await matchReminderConfirmationV2.confirm(delivery);
+
+          if (!confirmed) {
+            logger.warn("cron H-24 delivery confirmation lost", {
+              matchId,
+              uid,
+              deliveryId: delivery.id,
+            });
+          }
+        } catch (error) {
+          logger.warn("cron H-24 recipient failed", {
+            matchId,
+            uid,
+            error: String(error?.message ?? error),
+          });
+        }
       }
     }
   }
@@ -6981,6 +7181,7 @@ export const createGroupInvite =
     logger,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
   });
 
 
@@ -6994,6 +7195,7 @@ export const createGroupJoinRequest =
     logger,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
   });
 
 
@@ -7018,6 +7220,7 @@ export const approveGroupJoinRequest =
     logger,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
   });
 
 
@@ -7031,6 +7234,7 @@ export const rejectGroupJoinRequest =
     logger,
     tokensOf,
     sendVisibleHybrid,
+    isPushAllowed: isNotificationPushAllowedV2,
   });
 
 
@@ -7111,4 +7315,17 @@ export const syncGroupMembershipSnapshots =
     db,
     FieldValue,
     logger,
+  });
+
+// ======================================================
+// NOTIFICATION PREFERENCES V2 — READ / WRITE
+// ======================================================
+export const getNotificationPreferencesV2 =
+  buildGetNotificationPreferencesV2({
+    onCall, HttpsError, runtime: RUNTIME, db,
+  });
+
+export const setNotificationPreferencesV2 =
+  buildSetNotificationPreferencesV2({
+    onCall, HttpsError, runtime: RUNTIME, db,
   });
