@@ -313,6 +313,12 @@ const matchReminderSenderV2 =
     cleanupInvalidTokensFromResponse,
   });
 
+const matchReminderDeliveryStoreV2 =
+  buildMatchReminderDeliveryStoreV2({
+    db,
+    FieldValue,
+  });
+
 const matchReminderConfirmationV2 =
   buildMatchReminderConfirmationV2({
     deliveryStore: matchReminderDeliveryStoreV2,
@@ -5650,12 +5656,6 @@ export const onMatchParticipantsChange = onDocumentUpdated(
 // ======================================================
 // CRON — REMINDERS (1h)
 // ======================================================
-const matchReminderDeliveryStoreV2 =
-  buildMatchReminderDeliveryStoreV2({
-    db,
-    FieldValue,
-  });
-
 export const notifyOneHourBeforeMatchCron = onSchedule(
   { ...RUNTIME_SCHEDULE, schedule: "every 5 minutes", timeZone: "Europe/Paris" },
   async () => {
