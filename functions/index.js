@@ -1511,6 +1511,24 @@ async function pushNearbyForClubAvailabilityId(availabilityId) {
   let sentUsers = 0;
 
   for (const uid of recipientUids) {
+    let pushAllowed = false;
+
+    try {
+      pushAllowed = await isNotificationPushAllowedV2({
+        uid,
+        category: "clubs",
+        event: "nearbyCourt",
+      });
+    } catch (error) {
+      logger.warn("club availability notification preference failed", {
+        eventType: "nearbyCourt",
+        errorCode: error?.code || "unknown",
+      });
+      continue;
+    }
+
+    if (!pushAllowed) continue;
+
     const tokens = await tokensOf(uid);
     if (!tokens.length) continue;
 
