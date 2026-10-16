@@ -5924,6 +5924,21 @@ export const sendChatNotification = onCall(RUNTIME, async (req) => {
     throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: matchId missing");
   }
 
+  let pushAllowed = false;
+  try {
+    pushAllowed = await isNotificationPushAllowedV2({
+      uid: toUid,
+      category: "messages",
+      event: "matchMessage",
+    });
+  } catch (error) {
+    logger.warn("match chat preference check failed", {
+      errorCode: error?.code || "unknown",
+    });
+  }
+
+  if (!pushAllowed) return { ok: true, sent: false };
+
   const tokens = await tokensOf(toUid);
   if (!tokens.length) return { ok: true, sent: false };
 
@@ -6109,6 +6124,21 @@ export const notifyOnNewMessage = onDocumentCreated(
         );
       }
 
+      let pushAllowed = false;
+      try {
+        pushAllowed = await isNotificationPushAllowedV2({
+          uid: receiverUid,
+          category: "messages",
+          event: "directMessage",
+        });
+      } catch (error) {
+        logger.warn("direct chat preference check failed", {
+          errorCode: error?.code || "unknown",
+        });
+      }
+
+      if (!pushAllowed) return null;
+
       const tokens =
         await tokensOf(
           receiverUid
@@ -6179,6 +6209,21 @@ export const notifyOnNewMessage = onDocumentCreated(
     ) {
       return null;
     }
+
+    let pushAllowed = false;
+    try {
+      pushAllowed = await isNotificationPushAllowedV2({
+        uid: receiverUid,
+        category: "messages",
+        event: "matchMessage",
+      });
+    } catch (error) {
+      logger.warn("match message preference check failed", {
+        errorCode: error?.code || "unknown",
+      });
+    }
+
+    if (!pushAllowed) return null;
 
     const tokens =
       await tokensOf(receiverUid);
