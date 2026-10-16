@@ -5536,6 +5536,37 @@ export const onMatchParticipantsChange = onDocumentUpdated(
     // pour les matchs hors groupe afin d’éviter les doublons.
     if (!groupId) {
       for (const recipientUid of recipients) {
+        let allowJoined = false;
+        let allowLeft = false;
+
+        try {
+          if (joined.length) {
+            allowJoined = await isNotificationPushAllowedV2({
+              uid: recipientUid,
+              category: "matches",
+              event: "matchPlayerJoined",
+            });
+          }
+
+          if (left.length) {
+            allowLeft = await isNotificationPushAllowedV2({
+              uid: recipientUid,
+              category: "matches",
+              event: "matchPlayerLeft",
+            });
+          }
+        } catch (error) {
+          logger.warn("match participants notification preference failed", {
+            eventType: "matchParticipantsChange",
+            errorCode: error?.code || "unknown",
+          });
+          continue;
+        }
+
+        if (!allowJoined && !allowLeft) {
+          continue;
+        }
+
         const tokens =
           await tokensOf(recipientUid);
 
@@ -5543,7 +5574,7 @@ export const onMatchParticipantsChange = onDocumentUpdated(
           continue;
         }
 
-        for (const joinedUid of joined) {
+        for (const joinedUid of (allowJoined ? joined : [])) {
           const copy =
             copyFor(
               "match",
@@ -5572,7 +5603,7 @@ export const onMatchParticipantsChange = onDocumentUpdated(
           );
         }
 
-        for (const leftUid of left) {
+        for (const leftUid of (allowLeft ? left : [])) {
           const copy =
             copyFor(
               "match",
