@@ -7001,13 +7001,95 @@ export const broadcastMarketing = onCall(RUNTIME, async (req) => {
     throw new HttpsError("invalid-argument", "INVALID_ARGUMENT: body missing");
   }
 
-  await messaging.send({
-    topic: "all",
-    notification: { title, body },
-    data: { type: "admin", subtype: "marketing" },
+  // Les topics FCM ne permettent pas le filtrage individuel V2.
+  // Les destinataires sont donc sélectionnés avant l'envoi.
+  const tokens = new Set();
+  let lastUser = null;
+  let checkedUsers = 0;
+
+  while (true) {
+    let query = db.collection("users")
+      .orderBy("__name__")
+      .limit(100);
+
+    if (lastUser) {
+      query = query.startAfter(lastUser);
+    }
+
+    const snapshot = await query.get();
+    if (snapshot.empty) break;
+
+    for (let offset = 0; offset < snapshot.docs.length; offset += 10) {
+      const users = snapshot.docs.slice(offset, offset + 10);
+
+      await Promise.all(users.map(async (userDoc) => {
+        checkedUsers++;
+
+        let allowed = false;
+
+        try {
+          allowed = await isNotificationPushAllowedV2({
+            uid: userDoc.id,
+            category: "news",
+            event: "marketing",
+          });
+        } catch (error) {
+          logger.warn("marketing preference check failed", {
+            errorCode: error?.code || "unknown",
+          });
+          return;
+        }
+
+        if (!allowed) return;
+
+        try {
+          const userTokens = await tokensOf(userDoc.id);
+          for (const token of userTokens) {
+            tokens.add(token);
+          }
+        } catch (error) {
+          logger.warn("marketing token lookup failed", {
+            errorCode: error?.code || "unknown",
+          });
+        }
+      }));
+    }
+
+    lastUser = snapshot.docs[snapshot.docs.length - 1];
+    if (snapshot.size < 100) break;
+  }
+
+  const allTokens = [...tokens];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let offset = 0; offset < allTokens.length; offset += 500) {
+    const batch = allTokens.slice(offset, offset + 500);
+
+    const response = await messaging.sendEachForMulticast({
+      tokens: batch,
+      notification: { title, body },
+      data: { type: "admin", subtype: "marketing" },
+    });
+
+    successCount += response.successCount;
+    failureCount += response.failureCount;
+  }
+
+  logger.info("broadcastMarketing V2 completed", {
+    checkedUsers,
+    eligibleTokens: allTokens.length,
+    successCount,
+    failureCount,
   });
 
-  return { ok: true };
+  return {
+    ok: true,
+    checkedUsers,
+    eligibleTokens: allTokens.length,
+    successCount,
+    failureCount,
+  };
 });
 
 
