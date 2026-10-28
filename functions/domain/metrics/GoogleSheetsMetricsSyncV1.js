@@ -25,9 +25,9 @@ export function weeklySheetRow(weekStart, totals) {
 }
 export function overviewCells(totals) {
  return [
-  {range:"'Vue d\\'ensemble'!B5",values:[[totals.created]]},
-  {range:"'Vue d\\'ensemble'!B6",values:[[totals.joined]]},
-  {range:"'Vue d\\'ensemble'!B7",values:[[totals.full]]}
+  {range:"'Vue d''ensemble'!B5",values:[[totals.created]]},
+  {range:"'Vue d''ensemble'!B6",values:[[totals.joined]]},
+  {range:"'Vue d''ensemble'!B7",values:[[totals.full]]}
  ];
 }
 export async function readWeekFromFirestore(db, weekStart) {
