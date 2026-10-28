@@ -1,0 +1,17 @@
+name: PADIMA Metrics V1 Tests
+on:
+  push:
+    branches: [feature/product-metrics-v1]
+  workflow_dispatch:
+jobs:
+  metrics:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run test:metrics
