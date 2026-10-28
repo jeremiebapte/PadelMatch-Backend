@@ -566,6 +566,14 @@ service cloud.firestore {
     // Les clients iOS/Android ne lisent ni n'écrivent directement ici.
     // recordMatchView / getMatchViewers utilisent l'Admin SDK backend.
     // =========================================================
+    // Product metrics V1: backend Admin SDK only. No client access.
+    match /productMetricEventsV1/{eventId} {
+      allow read, write: if false;
+    }
+    match /productMetricsDailyV1/{dayId} {
+      allow read, write: if false;
+    }
+
     match /matchViews/{matchId} {
       allow read, write: if false;
 
