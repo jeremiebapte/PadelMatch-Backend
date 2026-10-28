@@ -8,7 +8,8 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "test": "node --test test/domain/activity/*.test.js test/domain/groups/*.test.js test/groups/*.test.js",
-    "test:emulator": "cd .. && firebase emulators:exec --only auth,firestore,functions \"node functions/test-group-participation-emulator.mjs\""
+    "test:emulator": "cd .. && firebase emulators:exec --only auth,firestore,functions \"node functions/test-group-participation-emulator.mjs\"",
+    "test:metrics": "node --test domain/metrics/test/*.test.js"
   },
   "engines": {
     "node": "22"
