@@ -1,0 +1,14 @@
+name: PADIMA Metrics V1 Probe Image
+on:
+  workflow_dispatch:
+jobs:
+  validate-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build read-only image locally (no registry push)
+        run: docker build -f functions/Dockerfile.metrics-probe -t padima-metrics-probe:ci functions
+      - name: Check image startup contract
+        run: |
+          docker image inspect padima-metrics-probe:ci --format '{{json .Config.Cmd}}'
+          test "$(docker image inspect padima-metrics-probe:ci --format '{{join .Config.Cmd " "}}')" = "node scripts/probe-padima-sheets.mjs"
