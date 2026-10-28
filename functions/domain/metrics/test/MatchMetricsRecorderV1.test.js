@@ -45,3 +45,23 @@ test("fake participants excluded and malformed IDs rejected",async()=>{
  assert.equal([...f.docs.keys()].filter(k=>k.startsWith("productMetricEventsV1/joined")).length,1);
  await assert.rejects(()=>rec.once({kind:"created",matchId:"bad/id"}),/INVALID_METRIC_ID/);
 });
+
+test("creator does not count as a match join",async()=>{
+ const f=fakeDb(),rec=buildMatchMetricsRecorder({...f,now:()=>new Date("2026-10-28T12:00:00Z")});
+ await rec.onMatchCreated("m2",{createurUid:"a",participants:["a","b"]});
+ assert.equal(f.docs.get("productMetricsDailyV1/2026-10-28").joined,1);
+});
+test("late retry keeps original event day",async()=>{
+ const f=fakeDb(),rec=buildMatchMetricsRecorder({...f});
+ await rec.once({kind:"created",matchId:"m3",occurredAt:"2026-10-20T12:00:00Z"});
+ await rec.once({kind:"created",matchId:"m3",occurredAt:"2026-10-28T12:00:00Z"});
+ assert.equal(f.docs.get("productMetricsDailyV1/2026-10-20").created,1);
+ assert.equal(f.docs.has("productMetricsDailyV1/2026-10-28"),false);
+});
+test("event keys cannot collide across underscore-delimited IDs",async()=>{
+ const f=fakeDb(),rec=buildMatchMetricsRecorder({...f});
+ const at="2026-10-28T12:00:00Z";
+ await rec.once({kind:"joined",matchId:"a_b",uid:"c",occurredAt:at});
+ await rec.once({kind:"joined",matchId:"a",uid:"b_c",occurredAt:at});
+ assert.equal(f.docs.get("productMetricsDailyV1/2026-10-28").joined,2);
+});
