@@ -1,0 +1,47 @@
+name: PADIMA Metrics V1 Probe Image
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/product-metrics-v1
+    paths:
+      - '.github/workflows/metrics-v1-probe-image.yml'
+      - 'functions/Dockerfile.metrics-probe'
+      - 'functions/scripts/probe-padima-sheets.mjs'
+      - 'functions/domain/metrics/SheetsAuthProbeV1.js'
+jobs:
+  validate-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build read-only image locally (no registry push)
+        run: docker build -f functions/Dockerfile.metrics-probe -t padima-metrics-probe:ci functions
+      - name: Check image startup contract
+        run: |
+          docker image inspect padima-metrics-probe:ci --format '{{json .Config.Cmd}}'
+          test "$(docker image inspect padima-metrics-probe:ci --format '{{join .Config.Cmd " "}}')" = "node scripts/probe-padima-sheets.mjs"
+
+  publish-image:
+    name: Publish probe image to Artifact Registry (manual only)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/product-metrics-v1'
+    needs: validate-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Configure Docker authentication
+        run: |
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - name: Build and publish immutable commit-tagged image
+        env:
+          IMAGE: europe-west1-docker.pkg.dev/padelmatch-32186/padima-metrics/padima-metrics-probe
+        run: |
+          docker build -f functions/Dockerfile.metrics-probe -t "$IMAGE:${GITHUB_SHA}" functions
+          docker push "$IMAGE:${GITHUB_SHA}"
