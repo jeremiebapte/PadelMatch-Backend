@@ -42,3 +42,18 @@ export async function planSync({db,weekStart}) {
  const totals=summarizeWeek(docs,weekStart);
  return {status:"partial",weekStart,totals,writes:overviewCells(totals),weeklyRow:weeklySheetRow(weekStart,totals)};
 }
+
+export async function applySyncPlan({sheets,spreadsheetId=DASHBOARD_SPREADSHEET_ID,plan}) {
+ if(plan.status!=="partial") return {status:"skipped",reason:plan.status};
+ // Upsert by week key. A retry replaces the same row, never appends a duplicate.
+ const current=await sheets.spreadsheets.values.get({spreadsheetId,range:"'Historique hebdo'!A2:A500"});
+ const values=current.data.values||[];
+ const found=values.findIndex(row=>row[0]===plan.weekStart);
+ const rowNumber=found>=0?found+2:values.length+2;
+ const data=[
+  {range:`'Historique hebdo'!A${rowNumber}:I${rowNumber}`,values:[plan.weeklyRow]},
+  ...plan.writes
+ ];
+ await sheets.spreadsheets.values.batchUpdate({spreadsheetId,requestBody:{valueInputOption:"RAW",data}});
+ return {status:"written",rowNumber,weekStart:plan.weekStart};
+}
