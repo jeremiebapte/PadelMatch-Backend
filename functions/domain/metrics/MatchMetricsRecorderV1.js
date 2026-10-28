@@ -9,8 +9,8 @@ const timestampDate = value => {
   return new Date(value);
 };
 const creatorUid = match => match?.createurUid || match?.creatorUid || match?.createdByUid || null;
-export function buildMatchMetricsRecorder({ db, FieldValue }) {
-  async function once({ kind, matchId, uid = null, occurredAt }) {
+export function buildMatchMetricsRecorder({ db, FieldValue, now = () => new Date() }) {
+  async function once({ kind, matchId, uid = null, occurredAt = now() }) {
     if (!["created","joined","full"].includes(kind) || !validId(matchId) || (kind === "joined" && !validId(uid))) throw new Error("INVALID_METRIC_ID");
     const date = timestampDate(occurredAt);
     if (!Number.isFinite(date.getTime())) throw new Error("INVALID_METRIC_TIMESTAMP");
