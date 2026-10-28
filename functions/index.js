@@ -7517,7 +7517,7 @@ export const recordProductMatchCreatedV1 = onDocumentCreated(
   async event => {
     const match = event.data?.data();
     if (!match) return;
-    await matchMetricsRecorderV1.onMatchCreated(event.params.matchId, match);
+    await matchMetricsRecorderV1.onMatchCreated(event.params.matchId, match, event.time || event.data?.createTime);
   }
 );
 export const recordProductMatchUpdatedV1 = onDocumentUpdated(
@@ -7526,6 +7526,6 @@ export const recordProductMatchUpdatedV1 = onDocumentUpdated(
     const before = event.data?.before?.data();
     const after = event.data?.after?.data();
     if (!before || !after) return;
-    await matchMetricsRecorderV1.onMatchUpdated(event.params.matchId, before, after);
+    await matchMetricsRecorderV1.onMatchUpdated(event.params.matchId, before, after, event.time || event.data?.after?.updateTime);
   }
 );
