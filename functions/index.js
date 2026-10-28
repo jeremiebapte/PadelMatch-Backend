@@ -7505,3 +7505,27 @@ export const setNotificationPreferencesV2 =
   buildSetNotificationPreferencesV2({
     onCall, HttpsError, runtime: RUNTIME, db,
   });
+
+
+// ======================================================
+// PRODUCT METRICS V1 — Firestore triggers (not deployed)
+// ======================================================
+import { buildMatchMetricsRecorder } from "./domain/metrics/MatchMetricsRecorderV1.js";
+const matchMetricsRecorderV1 = buildMatchMetricsRecorder({ db, FieldValue });
+export const recordProductMatchCreatedV1 = onDocumentCreated(
+  { document: "matches/{matchId}", region: "europe-west1" },
+  async event => {
+    const match = event.data?.data();
+    if (!match) return;
+    await matchMetricsRecorderV1.onMatchCreated(event.params.matchId, match);
+  }
+);
+export const recordProductMatchUpdatedV1 = onDocumentUpdated(
+  { document: "matches/{matchId}", region: "europe-west1" },
+  async event => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+    await matchMetricsRecorderV1.onMatchUpdated(event.params.matchId, before, after);
+  }
+);
