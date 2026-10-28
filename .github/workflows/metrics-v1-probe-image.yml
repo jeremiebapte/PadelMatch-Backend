@@ -1,6 +1,14 @@
 name: PADIMA Metrics V1 Probe Image
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/product-metrics-v1
+    paths:
+      - '.github/workflows/metrics-v1-probe-image.yml'
+      - 'functions/Dockerfile.metrics-probe'
+      - 'functions/scripts/probe-padima-sheets.mjs'
+      - 'functions/domain/metrics/SheetsAuthProbeV1.js'
 jobs:
   validate-image:
     runs-on: ubuntu-latest
