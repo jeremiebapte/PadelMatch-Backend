@@ -1,0 +1,27 @@
+name: PADIMA Metrics Sync Preflight CI
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/product-metrics-v1
+    paths:
+      - '.github/workflows/metrics-sync-preflight.yml'
+      - 'functions/Dockerfile.metrics-preflight'
+      - 'functions/scripts/preflight-padima-metrics.mjs'
+      - 'functions/domain/metrics/**'
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Unit tests
+        working-directory: functions
+        run: npm ci && npm run test:metrics
+      - name: Build image (no push)
+        run: docker build -f functions/Dockerfile.metrics-preflight -t padima-metrics-preflight:ci functions
+      - name: Verify startup command
+        run: |
+          test "$(docker image inspect padima-metrics-preflight:ci --format '{{join .Config.Cmd " "}}')" = "node scripts/preflight-padima-metrics.mjs"
