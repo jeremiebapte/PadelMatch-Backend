@@ -25,3 +25,27 @@ jobs:
       - name: Verify startup command
         run: |
           test "$(docker image inspect padima-metrics-preflight:ci --format '{{join .Config.Cmd " "}}')" = "node scripts/preflight-padima-metrics.mjs"
+
+  publish:
+    name: Publish preflight image (manual only)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/product-metrics-v1'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Configure registry
+        run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - name: Publish commit-tagged preflight image
+        env:
+          IMAGE: europe-west1-docker.pkg.dev/padelmatch-32186/padima-metrics/padima-metrics-preflight
+        run: |
+          docker build -f functions/Dockerfile.metrics-preflight -t "$IMAGE:${GITHUB_SHA}" functions
+          docker push "$IMAGE:${GITHUB_SHA}"
