@@ -1,6 +1,24 @@
 # Metrics preflight: PERMISSION_DENIED investigation (2026-11-02)
 
-## Evidence and limits
+## Resolution confirmed by the user's Cloud Shell output
+
+At 2026-11-02 13:44:05 UTC, execution `padima-metrics-probe-v5j6d`
+completed with exit 0. Logs report `firestore: accessible`, `sheets: accessible`,
+`mode: read-only`, `writes: 0`, `weekStart: 2026-11-02`,
+`metricsStatus: no_data`, `countersPresent: false`.
+
+The user created `projects/padelmatch-32186/roles/padimaMetricsReader` with only
+`datastore.entities.get` and `datastore.entities.list`, and bound it to the
+runtime account with condition
+`resource.name=="projects/padelmatch-32186/databases/(default)"`.
+This grants database-wide reads, not collection-scoped reads.
+
+The job still uses preflight image tag `5a3540c9f7de82c9fb5234930f1981cc45472647`.
+The diagnostic improvements in commit `77eb457` have not been deployed. This
+successful run validates read access, not Sheets writes or counter production.
+See `README-COUNTER-AUDIT.md` for the remaining ingestion check.
+
+## Original evidence and limits (before the IAM correction)
 
 The supplied 2026-10-29 logs show four `7 PERMISSION_DENIED` failures from
 `padima-metrics-probe`, execution `padima-metrics-probe-kwd6m` (15:07–15:09 UTC).
