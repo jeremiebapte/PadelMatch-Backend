@@ -34,3 +34,24 @@ test("buildParticipants supports a solo creator looking for 3 players", () => {
     ]
   );
 });
+
+test("buildParticipants replaces placeholders with selected group members", () => {
+  assert.deepEqual(
+    buildParticipants("creator", 1, ["member_a", "member_b"]),
+    ["creator", "member_a", "member_b"]
+  );
+});
+
+test("buildParticipants supports a selected group member and an external friend", () => {
+  assert.deepEqual(
+    buildParticipants("creator", 1, ["member_a"]),
+    ["creator", "member_a", "ami_de_creator:Joueur 1"]
+  );
+});
+
+test("buildParticipants supports one preconfirmed member when two players are missing", () => {
+  assert.deepEqual(
+    buildParticipants("creator", 2, ["member_a"]),
+    ["creator", "member_a"]
+  );
+});
