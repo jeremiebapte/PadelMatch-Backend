@@ -626,6 +626,11 @@ function buildMatchDocument({
 
     participants,
 
+    // Seats assigned by an organizer must not masquerade as self-confirmations.
+    ...(input.confirmedGroupMemberIds.length
+      ? { organizerAddedParticipantIds: input.confirmedGroupMemberIds }
+      : {}),
+
     ...buildInitialMatchDistribution({
       groupId:
         input.groupId,
@@ -833,14 +838,17 @@ export function buildCreateMatch({
           HttpsError,
         });
 
-        await validateScheduling({
-          uid,
-          input,
-          hasTimeOverlap,
-          hasReservationOverlap,
-          logger,
-          HttpsError,
-        });
+        // Apply the same schedule checks to every preselected real member.
+        for (const participantUid of [uid, ...input.confirmedGroupMemberIds]) {
+          await validateScheduling({
+            uid: participantUid,
+            input,
+            hasTimeOverlap,
+            hasReservationOverlap,
+            logger,
+            HttpsError,
+          });
+        }
 
         const [
           creatorProfile,
