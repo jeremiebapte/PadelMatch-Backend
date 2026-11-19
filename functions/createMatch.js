@@ -20,6 +20,7 @@ import {
   GroupActivityType,
   GroupActivityVisibility,
   GroupPermissionError,
+  GroupMembershipStatus,
   assertCanCreateMatch,
   createGroupActivityRecorder,
   membershipDocumentId,
@@ -121,6 +122,15 @@ function validateCreateMatchInput(
     asString(data?.clubId)
     || null;
 
+  const rawConfirmedMembers = data?.confirmedGroupMemberIds ?? [];
+  if (!Array.isArray(rawConfirmedMembers)
+      || rawConfirmedMembers.length > 2
+      || rawConfirmedMembers.some((id) => typeof id !== "string" || !id.trim())
+      || new Set(rawConfirmedMembers.map((id) => id.trim())).size !== rawConfirmedMembers.length) {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
+  }
+  const confirmedGroupMemberIds = rawConfirmedMembers.map((id) => id.trim());
+
   const rawGroupId =
     asString(data?.groupId);
 
@@ -136,6 +146,10 @@ function validateCreateMatchInput(
         "INVALID_GROUP_ID"
       );
     }
+  }
+
+  if (confirmedGroupMemberIds.length && (!groupId || createdByType !== "player" || confirmedGroupMemberIds.length > 3 - joueursManquants)) {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
   }
 
   if (!placeId) {
@@ -209,6 +223,7 @@ function validateCreateMatchInput(
     joueursManquants,
     clubId,
     groupId,
+    confirmedGroupMemberIds,
   };
 }
 
@@ -481,24 +496,34 @@ async function validateScheduling({
 
 export function buildParticipants(
   uid,
-  joueursManquants
+  joueursManquants,
+  confirmedGroupMemberIds = []
 ) {
-  const participants = [uid];
-
-  if (joueursManquants === 1) {
-    participants.push(
-      `ami_de_${uid}:Joueur 1`,
-      `ami_de_${uid}:Joueur 2`
-    );
-  } else if (joueursManquants === 2) {
-    participants.push(
-      `ami_de_${uid}:Joueur 1`
-    );
+  const participants = [uid, ...confirmedGroupMemberIds];
+  const reservedPlaces = 4 - joueursManquants;
+  for (let i = 0; participants.length < reservedPlaces; i++) {
+    participants.push(`ami_de_${uid}:Joueur ${i + 1}`);
   }
-
   return participants;
 }
 
+
+async function validateConfirmedGroupMembers({ db, uid, groupId, memberIds, HttpsError }) {
+  if (!memberIds.length) return;
+  if (memberIds.includes(uid)) {
+    throw new HttpsError("invalid-argument", "CREATOR_CANNOT_BE_PRECONFIRMED");
+  }
+  const snapshots = await Promise.all(memberIds.map((memberId) =>
+    db.collection("groupMemberships")
+      .doc(membershipDocumentId(groupId, memberId))
+      .get()
+  ));
+  if (snapshots.some((snap) =>
+    !snap.exists || snap.data()?.status !== GroupMembershipStatus.ACTIVE
+  )) {
+    throw new HttpsError("failed-precondition", "CONFIRMED_MEMBER_NOT_ACTIVE");
+  }
+}
 
 async function loadCreatorProfile({
   db,
@@ -800,6 +825,14 @@ export function buildCreateMatch({
           }),
         ]);
 
+        await validateConfirmedGroupMembers({
+          db,
+          uid,
+          groupId: input.groupId,
+          memberIds: input.confirmedGroupMemberIds,
+          HttpsError,
+        });
+
         await validateScheduling({
           uid,
           input,
@@ -824,7 +857,8 @@ export function buildCreateMatch({
           Promise.resolve(
             buildParticipants(
               uid,
-              input.joueursManquants
+              input.joueursManquants,
+              input.confirmedGroupMemberIds
             )
           ),
         ]);
