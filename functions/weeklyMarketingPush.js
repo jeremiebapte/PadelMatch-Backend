@@ -57,7 +57,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     const candidates = messages.length ? messages : library;
     const last = await db.collection("marketingPush/config/deliveries")
       .orderBy("createdAt", "desc").limit(10).get();
-    const used = new Set(last.docs.map(d => d.get("messageId")));
+    const used = new Set(last.docs.filter(d => testMode ? d.id.startsWith("test-") : !d.id.startsWith("test-")).map(d => d.get("messageId")));
     const selected = candidates.find(d => !used.has(d.id)) || candidates[
       (Number(week.split("W")[1]) - 1) % candidates.length
     ];
@@ -78,7 +78,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
       return true;
     });
     if (!claimed) return {status:"already_claimed",week};
-    let checkedUsers=0, successCount=0, failureCount=0;
+    let checkedUsers=0, successCount=0, failureCount=0, skippedUsers=0;
     const tokens = new Set();
     try {
       if (testMode) {
@@ -99,6 +99,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
             if(!await isPushAllowed({uid:userDoc.id,category:"news",event:"marketing"})) continue;
             for(const token of await tokensOf(userDoc.id)) tokens.add(token);
           } catch(err) {
+            skippedUsers++;
             logger.warn("weekly marketing recipient skipped", {code:err?.code || "unknown"});
           }
         }
@@ -117,13 +118,13 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
         failureCount+=result.failureCount;
       }
       await deliveryRef.update({status:"completed",checkedUsers,
-        eligibleTokens:allTokens.length,successCount,failureCount,
+        eligibleTokens:allTokens.length,successCount,failureCount,skippedUsers,
         completedAt:new Date()});
       return {status:"completed",week,checkedUsers,eligibleTokens:allTokens.length,
-        successCount,failureCount};
+        successCount,failureCount,skippedUsers};
     } catch(err) {
       await deliveryRef.update({status:"failed",checkedUsers,
-        eligibleTokens:tokens.size,successCount,failureCount,
+        eligibleTokens:tokens.size,successCount,failureCount,skippedUsers,
         errorCode:err?.code || "unknown",completedAt:new Date()});
       logger.error("weekly marketing failed; manual review required", {
         week,code:err?.code || "unknown",
