@@ -45,3 +45,10 @@ Run `node --check functions/index.js` and `node --check functions/weeklyMarketin
 Test with a dedicated staging Firebase project or controlled recipient list before enabling
 the all-users campaign. This implementation deliberately rejects non-`all` audience,
 so a targeted test requires an additional controlled-audience implementation.
+
+## Editorial policy update
+The eight reviewed messages in `functions/weeklyMarketingCopy.js` are the **default** weekly rotation. No Firestore messages need to be created for normal weekly operation.
+
+Occasional timely ideas can be sent to the founder's assistant in natural language, rewritten and reviewed, then added to `marketingPush/messages` with `status: approved` and `active: true` for a future scheduled slot. When at least one approved Firestore message exists, that queue temporarily takes priority over the evergreen library. Archive the timely message after its scheduled use to resume the library. The assistant conversation alone does **not** publish a message or send a push; a deliberate write to Firestore and an enabled production scheduler are required.
+
+Avoid claims about current events unless checked at time of approval. Never send an unverified breaking-news claim.
