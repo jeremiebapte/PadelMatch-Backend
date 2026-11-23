@@ -4,10 +4,10 @@ import { buildWeeklyMarketingPush } from "../weeklyMarketingPush.js";
 import { MPG_LIBRARY } from "../weeklyMarketingCopy.js";
 
 function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{id:"user1"}],
-  approved = [], deliveries = [], testUid = ""} = {}) {
+  approved = [], deliveries = [], testUid = "", isPushAllowed = async()=>true} = {}) {
   const state = {claims:new Map(), sends:[], events:[], users};
   const messages = approved.map(m=>({id:m.id,data:()=>m}));
-  const savedDeliveries = deliveries.map(d=>({get:key=>d[key]}));
+  const savedDeliveries = deliveries.map(d=>({id:d.id,get:key=>d[key]}));
   const db={
     doc(path) {
       assert.equal(path.split("/").length % 2, 0, `Invalid Firestore document path: ${path}`);
@@ -39,7 +39,7 @@ function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{
   }};
   const sender=buildWeeklyMarketingPush({db,messaging,logger:{
     info:()=>{},warn:()=>{},error:()=>{},
-  },tokensOf:async()=>["token1"],isPushAllowed:async()=>true});
+  },tokensOf:async()=>["token1"],isPushAllowed});
   return {state,sender};
 }
 
@@ -122,4 +122,38 @@ test("dry-run uses valid Firestore document and collection paths", async () => {
   const {sender,state} = fakeStore({enabled:true,dryRun:true,audience:"test",testUid:"tester"});
   assert.equal((await sender({now:new Date("2026-11-24T17:30:00Z")})).status,"dry_run");
   assert.equal(state.sends.length,0);
+});
+
+
+test("production rotation ignores test campaign history",async()=>{
+  const {sender}=fakeStore({enabled:true,audience:"all",deliveries:[
+    {id:"test-2026-W48",messageId:"create-match"},
+  ]});
+  const result=await sender({now:new Date("2026-11-24T17:30:00Z")});
+  assert.equal(result.messageId,"create-match");
+});
+
+test("test rotation ignores production campaign history",async()=>{
+  const {sender}=fakeStore({enabled:true,audience:"test",testUid:"tester",deliveries:[
+    {id:"2026-W48",messageId:"create-match"},
+  ]});
+  const result=await sender({now:new Date("2026-11-24T17:30:00Z")});
+  assert.equal(result.messageId,"create-match");
+});
+
+test("recipient errors are counted without stopping other sends",async()=>{
+  const {sender,state}=fakeStore({enabled:true,dryRun:false,
+    users:[{id:"broken"},{id:"valid"}],
+    isPushAllowed:async({uid})=>{
+      if(uid==="broken")throw new Error("preference read failed");
+      return true;
+    },
+  });
+  const result=await sender({now:new Date("2026-11-24T17:30:00Z")});
+  assert.equal(result.status,"completed");
+  assert.equal(result.checkedUsers,2);
+  assert.equal(result.skippedUsers,1);
+  assert.equal(result.successCount,1);
+  assert.equal(state.sends.length,1);
+  assert.equal(state.claims.get("marketingPush/config/deliveries/2026-W48").skippedUsers,1);
 });
