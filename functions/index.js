@@ -1,3 +1,4 @@
+import { buildWeeklyMarketingPushCron } from "./weeklyMarketingPush.js";
 import {
   buildMatchReminderDeliveryStoreV2,
 } from "./domain/notifications/MatchReminderDeliveryStoreV2.js";
@@ -7505,3 +7506,10 @@ export const setNotificationPreferencesV2 =
   buildSetNotificationPreferencesV2({
     onCall, HttpsError, runtime: RUNTIME, db,
   });
+
+// Weekly MPG marketing: independent scheduler, opt-in via adminConfig/weeklyMarketingPush.enabled.
+// The existing broadcastMarketing callable remains unchanged.
+export const weeklyMarketingPushCron = onSchedule(
+  { ...RUNTIME_SCHEDULE, schedule: "30 18 * * 2", timeZone: "Europe/Paris" },
+  buildWeeklyMarketingPushCron({ db, messaging, tokensOf, isPushAllowed: isNotificationPushAllowedV2, logger })
+);
