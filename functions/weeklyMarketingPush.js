@@ -13,10 +13,12 @@ const WEEK_MS = 7 * 86400000;
 
 function parisWeek(date) {
   // ISO week based on Europe/Paris calendar date.
-  const day = new Intl.DateTimeFormat("en-CA", {
+  const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(date);
-  const d = new Date(day + "T12:00:00Z");
+  }).formatToParts(date);
+  const part = type => parts.find(p => p.type === type)?.value;
+  const d = new Date(Date.UTC(Number(part("year")), Number(part("month")) - 1,
+    Number(part("day")), 12));
   const weekday = (d.getUTCDay() + 6) % 7;
   d.setUTCDate(d.getUTCDate() - weekday + 3);
   const year = d.getUTCFullYear();
