@@ -79,6 +79,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     });
     if (!claimed) return {status:"already_claimed",week};
     let checkedUsers=0, successCount=0, failureCount=0, skippedUsers=0;
+    let eligibleTokens=0, attemptedTokens=0;
     const tokens = new Set();
     try {
       if (testMode) {
@@ -108,23 +109,32 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
       }
       }
       const allTokens=[...tokens];
+      eligibleTokens=allTokens.length;
       for(let i=0;i<allTokens.length;i+=500) {
+        const batch=allTokens.slice(i,i+500);
         const result=await messaging.sendEachForMulticast({
-          tokens:allTokens.slice(i,i+500),
+          tokens:batch,
           notification:{title:message.title,body:message.body},
           data:{type:"admin",subtype:"marketing",campaign:week},
         });
+        attemptedTokens+=batch.length;
         successCount+=result.successCount;
         failureCount+=result.failureCount;
       }
-      await deliveryRef.update({status:"completed",checkedUsers,
-        eligibleTokens:allTokens.length,successCount,failureCount,skippedUsers,
+      const status=failureCount>0 ? "partial" : "completed";
+      await deliveryRef.update({status,checkedUsers,
+        eligibleTokens,attemptedTokens,successCount,failureCount,skippedUsers,
         completedAt:new Date()});
-      return {status:"completed",week,checkedUsers,eligibleTokens:allTokens.length,
+      return {status,week,checkedUsers,eligibleTokens,attemptedTokens,
         successCount,failureCount,skippedUsers};
     } catch(err) {
-      await deliveryRef.update({status:"failed",checkedUsers,
-        eligibleTokens:tokens.size,successCount,failureCount,skippedUsers,
+      // A failed batch may have been accepted remotely before throwing.
+      // Preserve the claim and require manual review; never automatically retry.
+      const status=successCount>0 ? "partial" : "failed";
+      await deliveryRef.update({status,checkedUsers,
+        eligibleTokens:eligibleTokens || tokens.size,attemptedTokens,
+        unattemptedTokens:Math.max(0,eligibleTokens-attemptedTokens),
+        successCount,failureCount,skippedUsers,
         errorCode:err?.code || "unknown",completedAt:new Date()});
       logger.error("weekly marketing failed; manual review required", {
         week,code:err?.code || "unknown",
