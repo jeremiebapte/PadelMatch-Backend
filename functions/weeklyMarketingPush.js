@@ -1,8 +1,8 @@
 // Weekly MPG-style PADIMA marketing push.
 // Firestore:
 // marketingPush/config { enabled:false, dryRun:true, audience:"all" }
-// marketingPush/messages/{id} {title,body,status:"approved",order:0,active:true}
-// marketingPush/deliveries/{YYYY-Www} { status, messageId, counts, ... }
+// marketingPush/config/messages/{id} {title,body,status:"approved",order:0,active:true}
+// marketingPush/config/deliveries/{YYYY-Www} { status, messageId, counts, ... }
 // Ideas can be submitted as status:"idea"; they are NEVER sent until approved.
 // Disabled by default. A production send requires enabled=true AND dryRun=false.
 import { MPG_LIBRARY } from "./weeklyMarketingCopy.js";
@@ -41,8 +41,8 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     }
     const dryRun = config.dryRun !== false;
     const week = parisWeek(now);
-    const deliveryRef = db.doc("marketingPush/deliveries/" + (testMode ? "test-" : "") + week);
-    const approved = await db.collection("marketingPush/messages")
+    const deliveryRef = db.doc("marketingPush/config/deliveries/" + (testMode ? "test-" : "") + week);
+    const approved = await db.collection("marketingPush/config/messages")
       .where("status", "==", "approved").get();
     const messages = approved.docs.filter(d => {
       const m = d.data();
@@ -55,7 +55,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     // The curated library is the default; optional approved Firestore campaigns override rotation.
     const library = MPG_LIBRARY.map((m, i) => ({id:m.id, data:()=>({...m,order:i})}));
     const candidates = messages.length ? messages : library;
-    const last = await db.collection("marketingPush/deliveries")
+    const last = await db.collection("marketingPush/config/deliveries")
       .orderBy("createdAt", "desc").limit(10).get();
     const used = new Set(last.docs.map(d => d.get("messageId")));
     const selected = candidates.find(d => !used.has(d.id)) || candidates[
