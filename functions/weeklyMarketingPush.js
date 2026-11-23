@@ -34,10 +34,14 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     const configSnap = await db.doc("marketingPush/config").get();
     const config = configSnap.data() || {};
     if (config.enabled !== true) return {status:"disabled"};
-    if (config.audience !== "all") return {status:"unsupported_audience"};
+    const testMode = config.audience === "test";
+    if (!testMode && config.audience !== "all") return {status:"unsupported_audience"};
+    if (testMode && (typeof config.testUid !== "string" || !config.testUid.trim())) {
+      return {status:"missing_test_uid"};
+    }
     const dryRun = config.dryRun !== false;
     const week = parisWeek(now);
-    const deliveryRef = db.doc("marketingPush/deliveries/" + week);
+    const deliveryRef = db.doc("marketingPush/deliveries/" + (testMode ? "test-" : "") + week);
     const approved = await db.collection("marketingPush/messages")
       .where("status", "==", "approved").get();
     const messages = approved.docs.filter(d => {
@@ -77,6 +81,12 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
     let checkedUsers=0, successCount=0, failureCount=0;
     const tokens = new Set();
     try {
+      if (testMode) {
+        checkedUsers = 1;
+        if (await isPushAllowed({uid:config.testUid,category:"news",event:"marketing"})) {
+          for (const token of await tokensOf(config.testUid)) tokens.add(token);
+        }
+      } else {
       let lastUser=null;
       while (true) {
         let q=db.collection("users").orderBy("__name__").limit(100);
@@ -94,6 +104,7 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
         }
         lastUser=snap.docs[snap.docs.length-1];
         if(snap.size<100) break;
+      }
       }
       const allTokens=[...tokens];
       for(let i=0;i<allTokens.length;i+=500) {
