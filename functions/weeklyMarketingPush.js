@@ -5,6 +5,8 @@
 // marketingPush/deliveries/{YYYY-Www} { status, messageId, counts, ... }
 // Ideas can be submitted as status:"idea"; they are NEVER sent until approved.
 // Disabled by default. A production send requires enabled=true AND dryRun=false.
+import { MPG_LIBRARY } from "./weeklyMarketingCopy.js";
+
 const MAX_TITLE = 45;
 const MAX_BODY = 110;
 const WEEK_MS = 7 * 86400000;
@@ -44,12 +46,14 @@ export function buildWeeklyMarketingPush({db, messaging, logger, tokensOf, isPus
         m.body.length <= MAX_BODY;
     }).sort((a,b) => (a.data().order || 0) - (b.data().order || 0) ||
       a.id.localeCompare(b.id));
-    if (!messages.length) return {status:"no_approved_messages"};
+    // The curated library is the default; optional approved Firestore campaigns override rotation.
+    const library = MPG_LIBRARY.map((m, i) => ({id:m.id, data:()=>({...m,order:i})}));
+    const candidates = messages.length ? messages : library;
     const last = await db.collection("marketingPush/deliveries")
       .orderBy("createdAt", "desc").limit(10).get();
     const used = new Set(last.docs.map(d => d.get("messageId")));
-    const selected = messages.find(d => !used.has(d.id)) || messages[
-      (Number(week.split("W")[1]) - 1) % messages.length
+    const selected = candidates.find(d => !used.has(d.id)) || candidates[
+      (Number(week.split("W")[1]) - 1) % candidates.length
     ];
     const message = selected.data();
     if (dryRun) {
