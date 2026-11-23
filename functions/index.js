@@ -33,6 +33,7 @@ import {
   buildNotificationPushGateV2,
 } from "./domain/notifications/NotificationPushGateV2.js";
 
+import { buildWeeklyMarketingPush } from "./weeklyMarketingPush.js";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
@@ -7505,3 +7506,16 @@ export const setNotificationPreferencesV2 =
   buildSetNotificationPreferencesV2({
     onCall, HttpsError, runtime: RUNTIME, db,
   });
+
+// Weekly MPG marketing: disabled until marketingPush/config is explicitly enabled.
+const weeklyMarketingPush = buildWeeklyMarketingPush({
+  db, messaging, logger, tokensOf, isPushAllowed: isNotificationPushAllowedV2,
+});
+export const weeklyMarketingPushCron = onSchedule({
+  ...RUNTIME_SCHEDULE,
+  schedule: "30 18 * * 2",
+  timeZone: "Europe/Paris",
+  retryCount: 0,
+}, async () => {
+  await weeklyMarketingPush();
+});
