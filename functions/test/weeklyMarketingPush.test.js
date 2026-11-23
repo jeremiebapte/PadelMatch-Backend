@@ -4,7 +4,8 @@ import { buildWeeklyMarketingPush } from "../weeklyMarketingPush.js";
 import { MPG_LIBRARY } from "../weeklyMarketingCopy.js";
 
 function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{id:"user1"}],
-  approved = [], deliveries = [], testUid = "", isPushAllowed = async()=>true} = {}) {
+  approved = [], deliveries = [], testUid = "", isPushAllowed = async()=>true,
+  tokensOf = async()=>["token1"], send = async payload=>({successCount:payload.tokens.length,failureCount:0})} = {}) {
   const state = {claims:new Map(), sends:[], events:[], users};
   const messages = approved.map(m=>({id:m.id,data:()=>m}));
   const savedDeliveries = deliveries.map(d=>({id:d.id,get:key=>d[key]}));
@@ -35,11 +36,11 @@ function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{
   };
   const messaging={sendEachForMulticast:async payload=>{
     state.sends.push(payload);
-    return {successCount:payload.tokens.length,failureCount:0};
+    return send(payload);
   }};
   const sender=buildWeeklyMarketingPush({db,messaging,logger:{
     info:()=>{},warn:()=>{},error:()=>{},
-  },tokensOf:async()=>["token1"],isPushAllowed});
+  },tokensOf,isPushAllowed});
   return {state,sender};
 }
 
@@ -156,4 +157,41 @@ test("recipient errors are counted without stopping other sends",async()=>{
   assert.equal(result.successCount,1);
   assert.equal(state.sends.length,1);
   assert.equal(state.claims.get("marketingPush/config/deliveries/2026-W48").skippedUsers,1);
+});
+
+
+test("multicast token failures produce a partial audit without retry",async()=>{
+  const {sender,state}=fakeStore({enabled:true,dryRun:false,
+    send:async()=>({successCount:0,failureCount:1}),
+  });
+  const date=new Date("2026-11-24T17:30:00Z");
+  const result=await sender({now:date});
+  assert.equal(result.status,"partial");
+  assert.equal(result.attemptedTokens,1);
+  assert.equal(result.failureCount,1);
+  assert.equal(state.claims.get("marketingPush/config/deliveries/2026-W48").status,"partial");
+  assert.equal((await sender({now:date})).status,"already_claimed");
+  assert.equal(state.sends.length,1);
+});
+
+test("failure after a successful batch records partial progress and prevents retry",async()=>{
+  const fakeTokens=Array.from({length:501},(_,i)=>"unique-token-"+i);
+  const {sender,state}=fakeStore({enabled:true,dryRun:false,
+    tokensOf:async()=>fakeTokens,
+    send:async payload=>{
+      if(payload.tokens.length===1)throw Object.assign(new Error("FCM unavailable"),{code:"unavailable"});
+      return {successCount:payload.tokens.length,failureCount:0};
+    },
+  });
+  const date=new Date("2026-11-24T17:30:00Z");
+  await assert.rejects(sender({now:date}),/FCM unavailable/);
+  const audit=state.claims.get("marketingPush/config/deliveries/2026-W48");
+  assert.equal(audit.status,"partial");
+  assert.equal(audit.eligibleTokens,501);
+  assert.equal(audit.attemptedTokens,500);
+  assert.equal(audit.unattemptedTokens,1);
+  assert.equal(audit.successCount,500);
+  assert.equal(audit.errorCode,"unavailable");
+  assert.equal((await sender({now:date})).status,"already_claimed");
+  assert.equal(state.sends.length,2);
 });
