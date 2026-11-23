@@ -4,13 +4,13 @@ import { buildWeeklyMarketingPush } from "../weeklyMarketingPush.js";
 import { MPG_LIBRARY } from "../weeklyMarketingCopy.js";
 
 function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{id:"user1"}],
-  approved = [], deliveries = []} = {}) {
+  approved = [], deliveries = [], testUid = ""} = {}) {
   const state = {claims:new Map(), sends:[], events:[], users};
   const messages = approved.map(m=>({id:m.id,data:()=>m}));
   const savedDeliveries = deliveries.map(d=>({get:key=>d[key]}));
   const db={
     doc(path) {
-      if(path==="marketingPush/config") return {get:async()=>({data:()=>({enabled,dryRun,audience})})};
+      if(path==="marketingPush/config") return {get:async()=>({data:()=>({enabled,dryRun,audience,testUid})})};
       return {
         path, get:async()=>({exists:state.claims.has(path)}),
         update:async patch=>{state.claims.set(path,{...state.claims.get(path),...patch});},
@@ -96,4 +96,21 @@ test("excluded recipient receives nothing",async()=>{
   const result=await sender({now:new Date("2026-11-24T17:30:00Z")});
   assert.equal(result.eligibleTokens,0);
   assert.equal(state.sends.length,0);
+});
+
+
+test("test audience without UID fails closed",async()=>{
+  const {sender,state}=fakeStore({enabled:true,dryRun:false,audience:"test"});
+  assert.equal((await sender()).status,"missing_test_uid");
+  assert.equal(state.sends.length,0);
+});
+
+test("test audience targets only the configured UID",async()=>{
+  const {sender,state}=fakeStore({enabled:true,dryRun:false,audience:"test",testUid:"my-test-uid",
+    users:[{id:"other-user"},{id:"another-user"}]});
+  const result=await sender({now:new Date("2026-11-24T17:30:00Z")});
+  assert.equal(result.status,"completed");
+  assert.equal(result.checkedUsers,1);
+  assert.equal(state.sends.length,1);
+  assert.equal(state.claims.has("marketingPush/deliveries/test-2026-W48"),true);
 });
