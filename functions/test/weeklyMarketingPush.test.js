@@ -17,7 +17,7 @@ function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{
       };
     },
     collection(path){
-      if(path==="marketingPush/messages") return {where:()=>({get:async()=>({docs:messages})})};
+      if(path==="marketingPush/messages") return {where:(field,op,value)=>({get:async()=>({docs:messages.filter(doc=>doc.data()[field] === value)})})};
       if(path==="marketingPush/deliveries") return {orderBy:()=>({limit:()=>({
         get:async()=>({docs:savedDeliveries}),
       })})};
