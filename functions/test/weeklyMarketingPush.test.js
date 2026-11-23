@@ -10,6 +10,7 @@ function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{
   const savedDeliveries = deliveries.map(d=>({get:key=>d[key]}));
   const db={
     doc(path) {
+      assert.equal(path.split("/").length % 2, 0, `Invalid Firestore document path: ${path}`);
       if(path==="marketingPush/config") return {get:async()=>({data:()=>({enabled,dryRun,audience,testUid})})};
       return {
         path, get:async()=>({exists:state.claims.has(path)}),
@@ -17,8 +18,9 @@ function fakeStore({enabled = false, dryRun = true, audience = "all", users = [{
       };
     },
     collection(path){
-      if(path==="marketingPush/messages") return {where:(field,op,value)=>({get:async()=>({docs:messages.filter(doc=>doc.data()[field] === value)})})};
-      if(path==="marketingPush/deliveries") return {orderBy:()=>({limit:()=>({
+      assert.equal(path.split("/").length % 2, 1, `Invalid Firestore collection path: ${path}`);
+      if(path==="marketingPush/config/messages") return {where:(field,op,value)=>({get:async()=>({docs:messages.filter(doc=>doc.data()[field] === value)})})};
+      if(path==="marketingPush/config/deliveries") return {orderBy:()=>({limit:()=>({
         get:async()=>({docs:savedDeliveries}),
       })})};
       if(path==="users") return {orderBy:()=>({limit:()=>({
@@ -112,5 +114,12 @@ test("test audience targets only the configured UID",async()=>{
   assert.equal(result.status,"completed");
   assert.equal(result.checkedUsers,1);
   assert.equal(state.sends.length,1);
-  assert.equal(state.claims.has("marketingPush/deliveries/test-2026-W48"),true);
+  assert.equal(state.claims.has("marketingPush/config/deliveries/test-2026-W48"),true);
+});
+
+// Regression: dry-run must traverse both Firestore subcollections with valid paths.
+test("dry-run uses valid Firestore document and collection paths", async () => {
+  const {sender,state} = fakeStore({enabled:true,dryRun:true,audience:"test",testUid:"tester"});
+  assert.equal((await sender({now:new Date("2026-11-24T17:30:00Z")})).status,"dry_run");
+  assert.equal(state.sends.length,0);
 });
