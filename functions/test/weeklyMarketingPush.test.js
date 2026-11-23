@@ -57,7 +57,7 @@ test("disabled by default: no pushes",async()=>{
 });
 
 test("unsupported audience: fail closed",async()=>{
-  const {sender,state}=fakeStore({enabled:true,audience:"test"});
+  const {sender,state}=fakeStore({enabled:true,audience:"unsupported"});
   assert.deepEqual(await sender(),{status:"unsupported_audience"});
   assert.equal(state.sends.length,0);
 });
