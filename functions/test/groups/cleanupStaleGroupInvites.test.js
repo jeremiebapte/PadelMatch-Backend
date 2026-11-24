@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { staleInviteReason, buildCleanupStaleGroupInvites } from "../cleanupStaleGroupInvites.js";
+import { staleInviteReason, buildCleanupStaleGroupInvites } from "../../cleanupStaleGroupInvites.js";
 
 const now = new Date("2026-11-24T12:00:00Z");
 const invite = (extra = {}) => ({
