@@ -4435,6 +4435,15 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
       participants:
         filtered.slice(),
 
+      ...(Array.isArray(matchData.organizerAddedParticipantIds)
+        ? {
+            organizerAddedParticipantIds:
+              matchData.organizerAddedParticipantIds.filter(
+                (participantUid) => filtered.includes(participantUid)
+              ),
+          }
+        : {}),
+
       capacity,
     };
 
@@ -4461,6 +4470,14 @@ export const leaveMatch = onCall(RUNTIME, async (req) => {
 
       updatedAt:
         FieldValue.serverTimestamp(),
+      ...(Array.isArray(matchData.organizerAddedParticipantIds)
+        ? {
+            organizerAddedParticipantIds:
+              matchData.organizerAddedParticipantIds.filter(
+                (participantUid) => filtered.includes(participantUid)
+              ),
+          }
+        : {}),
     };
 
     tx.update(

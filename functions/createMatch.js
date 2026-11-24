@@ -20,10 +20,12 @@ import {
   GroupActivityType,
   GroupActivityVisibility,
   GroupPermissionError,
+  GroupMembershipStatus,
   assertCanCreateMatch,
   createGroupActivityRecorder,
   membershipDocumentId,
   validateGroupId,
+  validateUserId,
   recordMatchCreated,
 } from "./domain/groups/index.js";
 
@@ -121,6 +123,20 @@ function validateCreateMatchInput(
     asString(data?.clubId)
     || null;
 
+  const rawConfirmedMembers = data?.confirmedGroupMemberIds ?? [];
+  if (!Array.isArray(rawConfirmedMembers)
+      || rawConfirmedMembers.length > 2
+      || rawConfirmedMembers.some((id) => typeof id !== "string" || !id.trim())
+      || new Set(rawConfirmedMembers.map((id) => id.trim())).size !== rawConfirmedMembers.length) {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
+  }
+  let confirmedGroupMemberIds;
+  try {
+    confirmedGroupMemberIds = rawConfirmedMembers.map((id) => validateUserId(id));
+  } catch {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
+  }
+
   const rawGroupId =
     asString(data?.groupId);
 
@@ -136,6 +152,10 @@ function validateCreateMatchInput(
         "INVALID_GROUP_ID"
       );
     }
+  }
+
+  if (confirmedGroupMemberIds.length && (!groupId || createdByType !== "player" || confirmedGroupMemberIds.length > 3 - joueursManquants)) {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
   }
 
   if (!placeId) {
@@ -209,6 +229,7 @@ function validateCreateMatchInput(
     joueursManquants,
     clubId,
     groupId,
+    confirmedGroupMemberIds,
   };
 }
 
@@ -481,24 +502,37 @@ async function validateScheduling({
 
 export function buildParticipants(
   uid,
-  joueursManquants
+  joueursManquants,
+  confirmedGroupMemberIds = []
 ) {
-  const participants = [uid];
-
-  if (joueursManquants === 1) {
-    participants.push(
-      `ami_de_${uid}:Joueur 1`,
-      `ami_de_${uid}:Joueur 2`
-    );
-  } else if (joueursManquants === 2) {
-    participants.push(
-      `ami_de_${uid}:Joueur 1`
-    );
+  const participants = [uid, ...confirmedGroupMemberIds];
+  const reservedPlaces = 4 - joueursManquants;
+  for (let i = 0; participants.length < reservedPlaces; i++) {
+    participants.push(`ami_de_${uid}:Joueur ${i + 1}`);
   }
-
   return participants;
 }
 
+
+async function validateConfirmedGroupMembers({ db, uid, groupId, memberIds, HttpsError }) {
+  if (!memberIds.length) return;
+  if (memberIds.includes(uid)) {
+    throw new HttpsError("invalid-argument", "CREATOR_CANNOT_BE_PRECONFIRMED");
+  }
+  const snapshots = await Promise.all(memberIds.map((memberId) =>
+    db.collection("groupMemberships")
+      .doc(membershipDocumentId(groupId, memberId))
+      .get()
+  ));
+  if (snapshots.some((snap, index) =>
+    !snap.exists
+    || snap.data()?.status !== GroupMembershipStatus.ACTIVE
+    || snap.data()?.groupId !== groupId
+    || snap.data()?.userId !== memberIds[index]
+  )) {
+    throw new HttpsError("failed-precondition", "CONFIRMED_MEMBER_NOT_ACTIVE");
+  }
+}
 
 async function loadCreatorProfile({
   db,
@@ -600,6 +634,11 @@ function buildMatchDocument({
     createdById,
 
     participants,
+
+    // Seats assigned by an organizer must not masquerade as self-confirmations.
+    ...(input.confirmedGroupMemberIds.length
+      ? { organizerAddedParticipantIds: input.confirmedGroupMemberIds }
+      : {}),
 
     ...buildInitialMatchDistribution({
       groupId:
@@ -800,14 +839,25 @@ export function buildCreateMatch({
           }),
         ]);
 
-        await validateScheduling({
+        await validateConfirmedGroupMembers({
+          db,
           uid,
-          input,
-          hasTimeOverlap,
-          hasReservationOverlap,
-          logger,
+          groupId: input.groupId,
+          memberIds: input.confirmedGroupMemberIds,
           HttpsError,
         });
+
+        // Apply the same schedule checks to every preselected real member.
+        for (const participantUid of [uid, ...input.confirmedGroupMemberIds]) {
+          await validateScheduling({
+            uid: participantUid,
+            input,
+            hasTimeOverlap,
+            hasReservationOverlap,
+            logger,
+            HttpsError,
+          });
+        }
 
         const [
           creatorProfile,
@@ -824,7 +874,8 @@ export function buildCreateMatch({
           Promise.resolve(
             buildParticipants(
               uid,
-              input.joueursManquants
+              input.joueursManquants,
+              input.confirmedGroupMemberIds
             )
           ),
         ]);
