@@ -94,6 +94,10 @@ import {
 } from "./acceptGroupInvite.js";
 
 import {
+  buildCleanupStaleGroupInvites,
+} from "./cleanupStaleGroupInvites.js";
+
+import {
   buildCreateGroupInvite,
 } from "./createGroupInvite.js";
 
@@ -7522,3 +7526,12 @@ export const setNotificationPreferencesV2 =
   buildSetNotificationPreferencesV2({
     onCall, HttpsError, runtime: RUNTIME, db,
   });
+
+
+// Reconcile stale direct group invitations and activity projections.
+export const cleanupStaleGroupInvitesCron = onSchedule(
+  { schedule: "every 1 hours", timeZone: "Europe/Paris", region: "europe-west1", timeoutSeconds: 300, memory: "256MiB" },
+  async () => {
+    await buildCleanupStaleGroupInvites({ db, logger })();
+  }
+);
