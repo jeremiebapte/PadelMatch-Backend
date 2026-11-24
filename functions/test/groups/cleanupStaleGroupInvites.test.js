@@ -53,7 +53,9 @@ function fixture({ status = "pending", expiresAt = new Date("2026-11-22"), membe
       if (collection === "groupMemberships") return { doc: id => ({ id, collection }) };
       if (collection === "userActivities") return {
         where() { return this; },
+        orderBy() { return this; },
         limit() { return this; },
+        async get() { return { empty: true, size: 0, docs: [] }; },
         collection,
       };
       throw Error("unexpected collection " + collection);
