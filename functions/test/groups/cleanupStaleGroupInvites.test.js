@@ -98,3 +98,79 @@ test("cleanup cancels already-member invitations before expiration", async () =>
   assert.equal(storedInvite.status, "cancelled");
   assert.equal(isActivityRemoved(), true);
 });
+
+function orphanActivityFixture(invitationData) {
+  const activityRef = { id: "act_orphan" };
+  const inviteRef = { id: "invite_old" };
+  const activityData = {
+    userId: "user_a", type: "group_invite_received",
+    inviteId: "invite_old", groupId: "group_a",
+  };
+  let deleted = false;
+  const db = {
+    collection(name) {
+      if (name === "groupInvites") return {
+        doc() { return inviteRef; },
+        where() { return this; }, orderBy() { return this; }, limit() { return this; },
+        async get() { return { empty: true, size: 0, docs: [] }; },
+      };
+      if (name === "userActivities") return {
+        where() { return this; }, orderBy() { return this; }, limit() { return this; },
+        async get() {
+          return { empty: false, size: 1, docs: [{
+            id: "act_orphan", ref: activityRef,
+            data: () => activityData,
+          }] };
+        },
+      };
+      if (name === "groupMemberships") return {
+        doc() { return { kind: "membership" }; },
+      };
+      throw Error("Unexpected collection: " + name);
+    },
+    async runTransaction(fn) {
+      return fn({
+        async get(ref) {
+          if (ref === activityRef) return { exists: true, data: () => activityData };
+          if (ref === inviteRef) return {
+            exists: !!invitationData, data: () => invitationData,
+          };
+          if (ref.kind === "membership") return { exists: false };
+          throw Error("Unexpected read");
+        },
+        delete(ref) {
+          assert.equal(ref, activityRef);
+          deleted = true;
+        },
+      });
+    },
+  };
+  return { db, wasDeleted: () => deleted };
+}
+
+test("orphaned invitation activity is removed even when zero invites are pending", async () => {
+  const { db, wasDeleted } = orphanActivityFixture(null);
+  const run = buildCleanupStaleGroupInvites({
+    db, now: () => now, logger: { info() {}, warn() {} },
+  });
+  await run();
+  assert.equal(wasDeleted(), true);
+});
+
+test("activity for a valid pending invitation is preserved", async () => {
+  const { db, wasDeleted } = orphanActivityFixture(invite());
+  const run = buildCleanupStaleGroupInvites({
+    db, now: () => now, logger: { info() {}, warn() {} },
+  });
+  await run();
+  assert.equal(wasDeleted(), false);
+});
+
+test("activity for an already accepted invitation is removed", async () => {
+  const { db, wasDeleted } = orphanActivityFixture(invite({ status: "accepted" }));
+  const run = buildCleanupStaleGroupInvites({
+    db, now: () => now, logger: { info() {}, warn() {} },
+  });
+  await run();
+  assert.equal(wasDeleted(), true);
+});
