@@ -175,6 +175,12 @@ export function buildDeclineGroupInvite({
               const invite =
                 inviteSnapshot.data();
 
+              const relatedActivities = await transaction.get(
+                db.collection("userActivities")
+                  .where("inviteId", "==", inviteSnapshot.id)
+                  .limit(100)
+              );
+
               const now =
                 new Date();
 
@@ -183,6 +189,13 @@ export function buildDeclineGroupInvite({
                 now,
                 uid
               );
+
+              for (const activity of relatedActivities.docs) {
+                const data = activity.data() || {};
+                if (data.userId === uid && data.type === "group_invite_received") {
+                  transaction.delete(activity.ref);
+                }
+              }
 
               transaction.update(
                 inviteSnapshot.ref,
