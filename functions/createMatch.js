@@ -25,6 +25,7 @@ import {
   createGroupActivityRecorder,
   membershipDocumentId,
   validateGroupId,
+  validateUserId,
   recordMatchCreated,
 } from "./domain/groups/index.js";
 
@@ -129,7 +130,12 @@ function validateCreateMatchInput(
       || new Set(rawConfirmedMembers.map((id) => id.trim())).size !== rawConfirmedMembers.length) {
     throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
   }
-  const confirmedGroupMemberIds = rawConfirmedMembers.map((id) => id.trim());
+  let confirmedGroupMemberIds;
+  try {
+    confirmedGroupMemberIds = rawConfirmedMembers.map((id) => validateUserId(id));
+  } catch {
+    throw new HttpsError("invalid-argument", "INVALID_CONFIRMED_GROUP_MEMBERS");
+  }
 
   const rawGroupId =
     asString(data?.groupId);
@@ -518,8 +524,11 @@ async function validateConfirmedGroupMembers({ db, uid, groupId, memberIds, Http
       .doc(membershipDocumentId(groupId, memberId))
       .get()
   ));
-  if (snapshots.some((snap) =>
-    !snap.exists || snap.data()?.status !== GroupMembershipStatus.ACTIVE
+  if (snapshots.some((snap, index) =>
+    !snap.exists
+    || snap.data()?.status !== GroupMembershipStatus.ACTIVE
+    || snap.data()?.groupId !== groupId
+    || snap.data()?.userId !== memberIds[index]
   )) {
     throw new HttpsError("failed-precondition", "CONFIRMED_MEMBER_NOT_ACTIVE");
   }
