@@ -399,6 +399,12 @@ return onCall(
                 }
               }
 
+              const relatedActivitySnapshot = await transaction.get(
+                db.collection("userActivities")
+                  .where("inviteId", "==", inviteRef.id)
+                  .limit(100)
+              );
+
               const now = new Date();
 
               assertInviteUsable(
@@ -438,6 +444,14 @@ return onCall(
                 inviteRef,
                 inviteUpdate
               );
+
+              for (const activity of relatedActivitySnapshot.docs) {
+                const activityData = activity.data() ?? {};
+                if (activityData.userId === uid
+                    && activityData.type === "group_invite_received") {
+                  transaction.delete(activity.ref);
+                }
+              }
 
               transaction.update(
                 groupRef,
