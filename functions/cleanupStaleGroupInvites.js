@@ -72,6 +72,63 @@ export function buildCleanupStaleGroupInvites({ db, logger = console, now = () =
       }
       if (snapshot.size < 150) break;
     }
+    // The invitation itself may have been accepted/deleted long ago.
+    // Reconcile orphaned Activity Center projections independently.
+    let activityScanned = 0;
+    let activityRemoved = 0;
+    let lastActivity = null;
+    for (let page = 0; page < 10; page++) {
+      let query = db.collection("userActivities")
+        .where("type", "==", "group_invite_received")
+        .orderBy("__name__").limit(100);
+      if (lastActivity) query = query.startAfter(lastActivity);
+      const snapshot = await query.get();
+      if (snapshot.empty) break;
+      lastActivity = snapshot.docs[snapshot.docs.length - 1];
+      for (const doc of snapshot.docs) {
+        activityScanned++;
+        try {
+          const removed = await db.runTransaction(async (tx) => {
+            const freshActivity = await tx.get(doc.ref);
+            if (!freshActivity.exists) return false;
+            const activity = freshActivity.data() || {};
+            if (activity.type !== "group_invite_received" || !activity.userId) return false;
+            const inviteId = activity.inviteId ||
+              (activity.entityType === "invitation" ? activity.entityId : null);
+            if (!inviteId) return false; // Do not guess which invitation is involved.
+            const inviteRef = db.collection("groupInvites").doc(inviteId);
+            const inviteSnap = await tx.get(inviteRef);
+            if (!inviteSnap.exists) {
+              tx.delete(doc.ref); // Source invitation no longer exists.
+              return true;
+            }
+            const invite = inviteSnap.data() || {};
+            if (invite.targetUserId && invite.targetUserId !== activity.userId) return false;
+            let membership = null;
+            if (invite.groupId) {
+              const membershipRef = db.collection("groupMemberships")
+                .doc(invite.groupId + "_" + activity.userId);
+              const snap = await tx.get(membershipRef);
+              membership = snap.exists ? snap.data() : null;
+            }
+            const stale = invite.status !== "pending"
+              || staleInviteReason(invite, membership, now()) !== null;
+            if (!stale) return false;
+            tx.delete(doc.ref);
+            return true;
+          });
+          if (removed) activityRemoved++;
+        } catch (error) {
+          logger.warn("cleanupStaleGroupInvites activity reconciliation failed", {
+            activityId: doc.id, error: error?.message ?? String(error),
+          });
+        }
+      }
+      if (snapshot.size < 100) break;
+    }
+    logger.info("cleanupStaleGroupInvites activity reconciliation", {
+      activityScanned, activityRemoved,
+    });
     logger.info("cleanupStaleGroupInvites complete", { scanned, cleaned });
     return { scanned, cleaned };
   };
